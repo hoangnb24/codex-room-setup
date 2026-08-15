@@ -1,0 +1,62 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/common.sh"
+
+failures=0
+warnings=0
+
+check_command() {
+  local command_name="$1"
+  if command -v "$command_name" >/dev/null 2>&1; then
+    printf 'OK    %-12s %s\n' "$command_name" "$(command -v "$command_name")"
+  else
+    printf 'FAIL  %-12s missing\n' "$command_name"
+    failures=$((failures + 1))
+  fi
+}
+
+for command_name in codex python3 git jq node npm; do
+  check_command "$command_name"
+done
+
+if [[ -d "$HOME/.codex" ]]; then
+  log "OK    Codex home   $HOME/.codex"
+else
+  log "FAIL  Codex home   $HOME/.codex is missing"
+  failures=$((failures + 1))
+fi
+
+for resource in config.toml auth.json AGENTS.md hooks.json skills plugins; do
+  if [[ -e "$HOME/.codex/$resource" ]]; then
+    log "OK    shared       ~/.codex/$resource"
+  else
+    log "WARN  shared       ~/.codex/$resource is missing; runtime sync will stop"
+    warnings=$((warnings + 1))
+  fi
+done
+
+case ":$PATH:" in
+  *":$HOME/.local/bin:"*) log "OK    PATH         ~/.local/bin" ;;
+  *)
+    log "WARN  PATH         add ~/.local/bin before running Paseo"
+    warnings=$((warnings + 1))
+    ;;
+esac
+
+paseo_checkout="${PASEO_REPO_DIR:-$HOME/projects/supervisors/paseo}"
+if [[ -d "$paseo_checkout/.git" ]]; then
+  log "OK    Paseo fork   $paseo_checkout"
+  log "INFO  branch       $(git -C "$paseo_checkout" branch --show-current)"
+  log "INFO  commit       $(git -C "$paseo_checkout" rev-parse --short HEAD)"
+else
+  log "WARN  Paseo fork   not found at $paseo_checkout"
+  warnings=$((warnings + 1))
+fi
+
+log ""
+if [[ "$failures" -gt 0 ]]; then
+  die "$failures required check(s) failed; $warnings warning(s)"
+fi
+log "DOCTOR_OK: $warnings warning(s)"
+

@@ -1,0 +1,200 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+live_config="@@HOME@@/.paseo/config.json"
+candidate="@@HOME@@/.config/codex-room/paseo.phase2-hard-cut.candidate.json"
+review_runtime="@@HOME@@/.codex-runtime/review/config.toml"
+expected_live_sha="27fce507f237831020c3f3b02f9f98d697b7144243f351adb0992bc92129bec2"
+expected_candidate_sha="0715b08829dc9f40f5f39f525e97400df1c6b38fb54d35b6f4dbe57fabd50ce8"
+expected_runtime_sha="0bf595a2cd509145110cf81d3e526f0b70a2bb31d3aa97a0ccf63276af48125f"
+backup_root="@@HOME@@/.codex-room-backups/codex-review-$(date -u +%Y%m%dT%H%M%SZ)"
+backup_config="${backup_root}/paseo.config.pre-codex-review.json"
+rollback_needed=false
+
+sha256() {
+  shasum -a 256 "$1" | awk '{print $1}'
+}
+
+fail() {
+  printf 'ERROR: %s\n' "$1" >&2
+  exit 1
+}
+
+atomic_restore() {
+  local source="$1"
+  local temporary
+  temporary=$(mktemp "@@HOME@@/.paseo/config.codex-review-rollback.XXXXXX") || return 1
+  cp "$source" "$temporary" || return 1
+  chmod 600 "$temporary" || return 1
+  mv "$temporary" "$live_config" || return 1
+}
+
+rollback() {
+  local reason="$1"
+  rollback_needed=false
+  printf 'Verification failed (%s); restoring previous Paseo config.\n' "$reason" >&2
+  if ! atomic_restore "$backup_config"; then
+    printf 'ROLLBACK_RESTORE_FAILED: previous config could not be restored.\n' >&2
+    return 1
+  fi
+  if ! paseo daemon restart --home "@@HOME@@/.paseo" --timeout 15 --json >&2; then
+    printf 'ROLLBACK_RESTART_FAILED: previous config is restored on disk, but Paseo did not restart.\n' >&2
+    return 1
+  fi
+  printf 'ROLLBACK_COMPLETE: previous config restored and Paseo restarted.\n' >&2
+}
+
+on_error() {
+  local status=$?
+  if [[ "$rollback_needed" == true && -f "$backup_config" ]]; then
+    if ! rollback "unexpected script failure"; then
+      exit 2
+    fi
+  fi
+  exit "$status"
+}
+
+assert_no_running_agents() {
+  local inventory
+  local running_agents
+  if ! inventory=$(paseo --json agent ls -g 2>/dev/null); then
+    fail "Paseo daemon became unreachable while checking the global agent gate"
+  fi
+  running_agents=$(jq '[.[] | select(.status == "running")] | length' <<<"$inventory")
+  if [[ "$running_agents" != "0" ]]; then
+    jq -r '.[] | select(.status == "running") | "- \(.id)  \(.name)"' <<<"$inventory" >&2
+    fail "$running_agents Paseo agent(s) are still running; close them before applying"
+  fi
+}
+
+ensure_daemon_reachable() {
+  if paseo --json agent ls -g >/dev/null 2>&1; then
+    return 0
+  fi
+
+  printf 'Paseo daemon is not reachable; starting it for preflight.\n' >&2
+  paseo daemon start --home "@@HOME@@/.paseo" --timeout 15 --json >&2 || \
+    fail "Paseo daemon could not be started"
+
+  for _attempt in {1..20}; do
+    if paseo --json agent ls -g >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 1
+  done
+  fail "Paseo daemon started but did not become reachable"
+}
+
+trap on_error ERR INT TERM
+
+for command_name in paseo jq shasum mktemp cp chmod mv; do
+  command -v "$command_name" >/dev/null || fail "required command is missing: $command_name"
+done
+
+[[ -f "$live_config" ]] || fail "live config not found: $live_config"
+[[ -f "$candidate" ]] || fail "candidate not found: $candidate"
+[[ -f "$review_runtime" ]] || fail "Review runtime not found: $review_runtime"
+command -v ocr >/dev/null || fail "OCR is not installed"
+
+actual_live_sha=$(sha256 "$live_config")
+actual_candidate_sha=$(sha256 "$candidate")
+actual_runtime_sha=$(sha256 "$review_runtime")
+[[ "$actual_live_sha" == "$expected_live_sha" ]] || \
+  fail "live config drifted; expected $expected_live_sha, got $actual_live_sha"
+[[ "$actual_candidate_sha" == "$expected_candidate_sha" ]] || \
+  fail "candidate drifted; expected $expected_candidate_sha, got $actual_candidate_sha"
+[[ "$actual_runtime_sha" == "$expected_runtime_sha" ]] || \
+  fail "Review runtime drifted; run codex-room-sync review and review the new hash"
+
+jq -e '
+  .agents.providers["codex-review"].command ==
+    ["@@HOME@@/.local/bin/codex-room", "review"]
+  and .daemon.mcp.injectIntoProviders == ["codex-supervisor", "codex-lead"]
+  and (.daemon.mcp.injectIntoProviders | index("codex-review") | not)
+' "$candidate" >/dev/null || fail "candidate provider or MCP boundary is invalid"
+
+live_without_review=$(jq -Sc '.' "$live_config")
+candidate_without_review=$(jq -Sc 'del(.agents.providers["codex-review"])' "$candidate")
+[[ "$candidate_without_review" == "$live_without_review" ]] || \
+  fail "candidate changes live configuration beyond adding codex-review"
+
+jq -e '
+  .agents.providers | has("codex-supervisor") and has("codex-lead") and
+  has("codex-peer") and has("codex-review") and (has("codex-root") | not)
+' "$candidate" >/dev/null || fail "candidate role inventory is invalid"
+
+grep -Fxq 'model = "gpt-5.6-luna"' "$review_runtime" || \
+  fail "Review runtime does not default to gpt-5.6-luna"
+grep -Fxq 'model_reasoning_effort = "max"' "$review_runtime" || \
+  fail "Review runtime does not use max reasoning"
+if grep -Eq '^\[mcp_servers\.' "$review_runtime"; then
+  fail "Review runtime unexpectedly contains MCP server tables"
+fi
+
+ensure_daemon_reachable
+assert_no_running_agents
+
+mkdir -m 700 "$backup_root"
+cp -p "$live_config" "$backup_config"
+chmod 600 "$backup_config"
+
+# Paseo has no admission-lock primitive. Recheck globally at the last possible
+# point and require the operator not to start new seats during this short apply.
+assert_no_running_agents
+temporary_config=$(mktemp "@@HOME@@/.paseo/config.codex-review.XXXXXX")
+cp "$candidate" "$temporary_config"
+chmod 600 "$temporary_config"
+mv "$temporary_config" "$live_config"
+rollback_needed=true
+
+if ! paseo daemon restart --home "@@HOME@@/.paseo" --timeout 15 --json; then
+  if ! rollback "daemon restart failed"; then
+    fail "Paseo restart failed and rollback failed; inspect the preceding ROLLBACK_* status"
+  fi
+  fail "Paseo restart failed; previous config restored"
+fi
+
+providers_ready=false
+inventory=""
+for _attempt in {1..20}; do
+  inventory=$(paseo provider ls --json 2>/dev/null || true)
+  if jq -e '
+    (map(select(.provider == "codex-supervisor" and .status == "available")) | length == 1)
+    and (map(select(.provider == "codex-lead" and .status == "available")) | length == 1)
+    and (map(select(.provider == "codex-peer" and .status == "available")) | length == 1)
+    and (map(select(.provider == "codex-review" and .status == "available")) | length == 1)
+    and (map(select(.provider == "codex-root")) | length == 0)
+  ' <<<"$inventory" >/dev/null 2>&1; then
+    providers_ready=true
+    break
+  fi
+  sleep 1
+done
+
+if [[ "$providers_ready" != true ]]; then
+  if ! rollback "provider inventory did not become ready"; then
+    fail "provider verification failed and rollback failed; inspect the preceding ROLLBACK_* status"
+  fi
+  fail "codex-review did not become available; previous config restored"
+fi
+
+models=$(paseo provider models codex-review --thinking --json)
+if ! jq -e '
+  any(.[]; .id == "gpt-5.6-luna" and (.thinkingOptionIds | index("max") != null))
+' <<<"$models" >/dev/null; then
+  if ! rollback "Luna Max is unavailable through codex-review"; then
+    fail "model verification failed and rollback failed; inspect the preceding ROLLBACK_* status"
+  fi
+  fail "codex-review lacks gpt-5.6-luna/max; previous config restored"
+fi
+
+rollback_needed=false
+trap - ERR INT TERM
+
+printf 'CODEX_REVIEW_APPLIED\n'
+printf 'live_sha256=%s\n' "$(sha256 "$live_config")"
+printf 'backup=%s\n' "$backup_config"
+printf 'provider=codex-review\n'
+printf 'model=gpt-5.6-luna\n'
+printf 'reasoning=max\n'
+printf 'mcp_injection=codex-supervisor,codex-lead\n'

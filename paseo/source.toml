@@ -1,0 +1,14 @@
+[repository]
+fork = "git@github.com:hoangnb24/paseo.git"
+upstream = "git@github.com:getpaseo/paseo.git"
+branch = "main"
+verified_commit = "1e84c503c4ed6f6aaaacaf2523210cc8b2beb410"
+verified_describe = "v0.4.0-13-g1e84c503c"
+
+[install]
+target = "~/projects/supervisors/paseo"
+cli_entrypoint = "packages/cli/bin/paseo"
+desktop_app = "/Applications/Paseo.app"
+paseo_home = "~/.paseo"
+listen = "127.0.0.1:6767"
+

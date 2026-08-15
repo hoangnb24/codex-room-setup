@@ -1,0 +1,98 @@
+#!/bin/zsh
+
+set -euo pipefail
+
+PASEO_REPO_DIR="${PASEO_REPO_DIR:-@@HOME@@/projects/supervisors/paseo}"
+PASEO_HOME_DIR="${PASEO_HOME_DIR:-@@HOME@@/.paseo}"
+INSTALLED_APP="/Applications/Paseo.app"
+
+if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
+  print "Usage: paseo-local-update"
+  print ""
+  print "Pull, build, sign, install, and restart the local Paseo fork."
+  print "Repo:  $PASEO_REPO_DIR"
+  print "State: $PASEO_HOME_DIR"
+  exit 0
+fi
+
+if [[ $# -ne 0 ]]; then
+  print -u2 "Unknown argument: $1"
+  print -u2 "Run paseo-local-update --help"
+  exit 2
+fi
+
+if [[ ! -d "$PASEO_REPO_DIR/.git" ]]; then
+  print -u2 "Paseo repo not found: $PASEO_REPO_DIR"
+  exit 1
+fi
+
+cd "$PASEO_REPO_DIR"
+
+case "$(uname -m)" in
+  arm64)
+    ELECTRON_ARCH_FLAG="--arm64"
+    BUILD_APP="$PASEO_REPO_DIR/packages/desktop/release/mac-arm64/Paseo.app"
+    ;;
+  x86_64)
+    ELECTRON_ARCH_FLAG="--x64"
+    BUILD_APP="$PASEO_REPO_DIR/packages/desktop/release/mac/Paseo.app"
+    ;;
+  *)
+    print -u2 "Unsupported architecture: $(uname -m)"
+    exit 1
+    ;;
+esac
+
+print "[1/7] Updating local fork"
+git pull --rebase
+
+print "[2/7] Installing dependencies"
+npm install
+
+print "[3/7] Building local Desktop"
+CSC_IDENTITY_AUTO_DISCOVERY=false \
+  npm run build:desktop -- --publish never --mac "$ELECTRON_ARCH_FLAG" --dir
+
+if [[ ! -d "$BUILD_APP" ]]; then
+  print -u2 "Desktop build not found: $BUILD_APP"
+  exit 1
+fi
+
+print "[4/7] Applying local ad-hoc signature"
+codesign --force --deep --sign - "$BUILD_APP"
+codesign --verify --deep --strict "$BUILD_APP"
+
+print "[5/7] Stopping Desktop and daemon"
+osascript -e 'tell application id "sh.paseo.desktop" to quit' 2>/dev/null || true
+for _ in {1..40}; do
+  if ! pgrep -f '/Applications/Paseo.app/Contents/MacOS/Paseo' >/dev/null; then
+    break
+  fi
+  sleep 0.25
+done
+
+"$PASEO_REPO_DIR/packages/cli/bin/paseo" daemon stop \
+  --home "$PASEO_HOME_DIR" >/dev/null 2>&1 || true
+
+print "[6/7] Installing local Desktop"
+if [[ -d "$INSTALLED_APP" ]]; then
+  BACKUP_APP="/Applications/Paseo.previous-$(date +%Y%m%d-%H%M%S).app"
+  mv "$INSTALLED_APP" "$BACKUP_APP"
+  print "Backup: $BACKUP_APP"
+fi
+
+ditto "$BUILD_APP" "$INSTALLED_APP"
+ln -sfn "$PASEO_REPO_DIR/packages/cli/bin/paseo" @@HOME@@/.local/bin/paseo
+
+print "[7/7] Starting local daemon and Desktop"
+"$PASEO_REPO_DIR/packages/cli/bin/paseo" daemon start \
+  --home "$PASEO_HOME_DIR" \
+  --listen 127.0.0.1:6767 \
+  --relay
+open "$INSTALLED_APP"
+
+sleep 2
+"$PASEO_REPO_DIR/packages/cli/bin/paseo" daemon status \
+  --home "$PASEO_HOME_DIR" --json
+
+print "Local Paseo update complete."

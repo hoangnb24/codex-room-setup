@@ -1,0 +1,54 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/common.sh"
+
+[[ "${1:-}" == "--apply" ]] || die "uninstall is a dry safety gate; rerun with --apply"
+
+timestamp=$(date -u +%Y%m%dT%H%M%SZ)
+backup_root="$HOME/.codex-room-backups/uninstall-${timestamp}"
+
+remove_if_managed() {
+  local source_path="$1"
+  local target_path="$2"
+  local temporary
+  [[ -f "$target_path" ]] || return
+  temporary=$(mktemp "${TMPDIR:-/tmp}/codex-room-uninstall.XXXXXX")
+  render_home_tokens "$source_path" "$temporary"
+  if ! cmp -s "$temporary" "$target_path"; then
+    warn "preserving modified file: $target_path"
+    rm -f "$temporary"
+    return
+  fi
+  mkdir -p "$backup_root/$(dirname "${target_path#$HOME/}")"
+  cp -p "$target_path" "$backup_root/${target_path#$HOME/}"
+  rm -f "$target_path" "$temporary"
+  log "REMOVED  $target_path"
+}
+
+while IFS='|' read -r source target; do
+  [[ -n "$source" ]] || continue
+  remove_if_managed "$REPO_ROOT/home/$source" "$HOME/$target"
+done <<'EOF'
+.config/codex-room/model-instructions.md|.config/codex-room/model-instructions.md
+.config/codex-room/overlays/supervisor.config.toml|.config/codex-room/overlays/supervisor.config.toml
+.config/codex-room/overlays/lead.config.toml|.config/codex-room/overlays/lead.config.toml
+.config/codex-room/overlays/peer.config.toml|.config/codex-room/overlays/peer.config.toml
+.config/codex-room/overlays/review.config.toml|.config/codex-room/overlays/review.config.toml
+.config/codex-room/workflow/WORKSPACE_PROTOCOL.md|.config/codex-room/workflow/WORKSPACE_PROTOCOL.md
+.config/codex-room/workflow/ANTI_PATTERNS.md|.config/codex-room/workflow/ANTI_PATTERNS.md
+.config/codex-room/workflow/SUPERVISOR_NOTEBOOK.md|.config/codex-room/workflow/SUPERVISOR_NOTEBOOK.md
+.config/codex-room/paseo.phase2-coexist.candidate.json.template|.config/codex-room/paseo.phase2-coexist.candidate.json
+.config/codex-room/paseo.phase2-hard-cut.candidate.json.template|.config/codex-room/paseo.phase2-hard-cut.candidate.json
+.local/bin/codex-room|.local/bin/codex-room
+.local/bin/codex-room-sync|.local/bin/codex-room-sync
+.local/bin/codex-room-hard-cut|.local/bin/codex-room-hard-cut
+.local/bin/codex-review-apply|.local/bin/codex-review-apply
+.local/bin/paseo-local-update|.local/bin/paseo-local-update
+.paseo/config.json.template|.paseo/config.json
+EOF
+
+log "UNINSTALL_COMPLETE"
+log "backup=$backup_root"
+log "Generated ~/.codex-runtime and Paseo state were preserved."
+

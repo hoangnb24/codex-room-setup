@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/common.sh"
+
+update_bin="$HOME/.local/bin/paseo-local-update"
+[[ -x "$update_bin" ]] || die "install the setup first; missing executable: $update_bin"
+exec "$update_bin" "$@"
+

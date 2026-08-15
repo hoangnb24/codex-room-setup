@@ -1,0 +1,101 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/common.sh"
+
+mode=installed
+live=false
+for argument in "$@"; do
+  case "$argument" in
+    --source) mode=source ;;
+    --live) live=true ;;
+    -h|--help)
+      echo "Usage: scripts/verify [--source] [--live]"
+      exit 0
+      ;;
+    *) die "unknown argument: $argument" ;;
+  esac
+done
+
+require_command python3
+require_command jq
+
+failures=0
+check() {
+  local description="$1"
+  shift
+  if "$@" >/dev/null 2>&1; then
+    log "OK    $description"
+  else
+    log "FAIL  $description"
+    failures=$((failures + 1))
+  fi
+}
+
+if [[ "$mode" == source ]]; then
+  config_template="$REPO_ROOT/home/.paseo/config.json.template"
+  overlays_root="$REPO_ROOT/home/.config/codex-room/overlays"
+  sync_path="$REPO_ROOT/home/.local/bin/codex-room-sync"
+else
+  config_template="$HOME/.paseo/config.json"
+  overlays_root="$HOME/.config/codex-room/overlays"
+  sync_path="$HOME/.local/bin/codex-room-sync"
+fi
+
+check "Paseo config exists" test -f "$config_template"
+check "Paseo config is valid JSON" jq -e . "$config_template"
+check "room sync exists" test -f "$sync_path"
+
+for role in supervisor lead peer review; do
+  check "$role overlay exists" test -f "$overlays_root/$role.config.toml"
+done
+
+check "four derived Codex providers" jq -e '
+  [.agents.providers | keys[] | select(startswith("codex-"))] |
+  sort == ["codex-lead", "codex-peer", "codex-review", "codex-supervisor"]
+' "$config_template"
+check "MCP injection boundary" jq -e '
+  .daemon.mcp.injectIntoProviders == ["codex-supervisor", "codex-lead"]
+' "$config_template"
+check "review defaults to Luna Max" jq -e '
+  .agents.providers["codex-review"].models[0] |
+  .id == "gpt-5.6-luna" and .isDefault == true and
+  .thinkingOptions[0].id == "max" and .thinkingOptions[0].isDefault == true
+' "$config_template"
+
+if [[ "$mode" == installed ]]; then
+  for role in supervisor lead peer review; do
+    runtime="$HOME/.codex-runtime/$role"
+    check "$role runtime config" test -f "$runtime/config.toml"
+    check "$role native agent catalog" test -f "$runtime/model-catalog.no-native-agents.json"
+    if [[ -f "$runtime/config.toml" ]]; then
+      check "$role agents disabled" grep -Eq '^multi_agent(_v2)? = false$' "$runtime/config.toml"
+    fi
+  done
+  if [[ -f "$HOME/.codex-runtime/review/config.toml" ]]; then
+    if grep -Eq '^\[mcp_servers\.' "$HOME/.codex-runtime/review/config.toml"; then
+      log "FAIL  review inherited MCP servers"
+      failures=$((failures + 1))
+    else
+      log "OK    review has no inherited MCP servers"
+    fi
+  fi
+fi
+
+if [[ "$live" == true ]]; then
+  require_command paseo
+  inventory_file=$(mktemp "${TMPDIR:-/tmp}/codex-room-provider-check.XXXXXX")
+  if paseo provider ls --host 127.0.0.1:6767 --json >"$inventory_file" 2>/dev/null; then
+    check "live custom provider inventory" jq -e '
+      [.[].provider] as $p |
+      all(["codex-supervisor", "codex-lead", "codex-peer", "codex-review"][]; . as $id | $p | index($id) != null)
+    ' "$inventory_file"
+  else
+    log "FAIL  live Paseo provider inventory is unreachable"
+    failures=$((failures + 1))
+  fi
+  rm -f "$inventory_file"
+fi
+
+[[ "$failures" -eq 0 ]] || die "$failures verification check(s) failed"
+log "VERIFY_OK"

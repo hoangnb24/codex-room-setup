@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/common.sh"
+
+require_command jq
+
+runtime_root="${CODEX_ROOM_RUNTIME_ROOT:-$HOME/.codex-runtime}"
+snapshot_root="$REPO_ROOT/runtime/snapshots"
+
+for role in supervisor lead peer review; do
+  runtime="$runtime_root/$role"
+  [[ -f "$runtime/config.toml" ]] || die "runtime is missing: $runtime/config.toml"
+  mkdir -p "$snapshot_root/$role"
+
+  awk '
+    BEGIN { in_tables = 0 }
+    /^\[/ { in_tables = 1 }
+    !in_tables && /^(model|model_reasoning_effort|approval_policy|approvals_reviewer|sandbox_mode|service_tier|personality|model_verbosity|model_catalog_json)[[:space:]]*=/ {
+      if ($0 ~ /^model_catalog_json/) print "model_catalog_json = \"<runtime>/model-catalog.no-native-agents.json\""
+      else print
+    }
+    /^\[features\]$/ { print; capture = 1; next }
+    /^\[agents\]$/ { print; capture = 1; next }
+    capture && /^\[/ { capture = 0 }
+    capture && /^(enabled|multi_agent|multi_agent_v2)[[:space:]]*=/ { print }
+  ' "$runtime/config.toml" > "$snapshot_root/$role/config.summary.toml"
+
+  jq '{model_count:(.models|length), models:[.models[]|{slug,display_name,multi_agent_version}]}' \
+    "$runtime/model-catalog.no-native-agents.json" \
+    > "$snapshot_root/$role/model-catalog.summary.json"
+
+  find "$runtime" -maxdepth 1 -type l -exec ls -l {} \; \
+    | sed "s#$HOME#~#g" \
+    > "$snapshot_root/$role/symlinks.txt"
+  log "EXPORTED  $role"
+done
+
+log "SNAPSHOTS_COMPLETE: $snapshot_root"
+

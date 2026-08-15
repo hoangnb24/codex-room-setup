@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/common.sh"
+
+sync_bin="${CODEX_ROOM_SYNC_BIN:-$HOME/.local/bin/codex-room-sync}"
+[[ -x "$sync_bin" ]] || die "sync launcher is missing or not executable: $sync_bin"
+
+if [[ "$#" -eq 0 ]]; then
+  roles=(supervisor lead peer review)
+else
+  roles=("$@")
+fi
+
+for role in "${roles[@]}"; do
+  case "$role" in
+    supervisor|lead|peer|review) ;;
+    *) die "unknown role: $role" ;;
+  esac
+  log "SYNC  $role"
+  "$sync_bin" "$role"
+done
+
+log "SYNC_COMPLETE: ${roles[*]}"
+

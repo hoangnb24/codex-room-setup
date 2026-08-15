@@ -1,0 +1,28 @@
+# Local test and editor state
+.DS_Store
+.idea/
+.vscode/
+__pycache__/
+*.pyc
+
+# Exported/generated private state must never enter Git
+home/.codex/
+home/.codex-runtime/
+home/.paseo/agents/
+home/.paseo/projects/
+home/.paseo/worktrees/
+home/.paseo/uploads/
+home/.paseo/daemon-keypair.json
+home/.paseo/push-tokens.json
+home/.paseo/cli-client-id
+home/.paseo/server-id
+home/.paseo/*.log
+home/.paseo/*.pid
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+
+# Generated audit snapshots are local unless intentionally promoted
+runtime/snapshots/*/
+!runtime/snapshots/.gitkeep
+

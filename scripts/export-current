@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/common.sh"
+
+[[ "${1:-}" == "--apply" ]] || die "export overwrites tracked source; rerun with --apply"
+require_command python3
+
+export_one() {
+  local source_path="$1"
+  local target_path="$2"
+  [[ -f "$source_path" ]] || die "source is missing: $source_path"
+  mkdir -p "$(dirname "$target_path")"
+  python3 - "$source_path" "$target_path" "$HOME" <<'PY'
+from pathlib import Path
+import sys
+
+source, target = map(Path, sys.argv[1:3])
+home = sys.argv[3]
+target.write_text(source.read_text().replace(home, "@@HOME@@"))
+PY
+  log "EXPORTED  $source_path"
+}
+
+export_one "$HOME/.config/codex-room/model-instructions.md" "$REPO_ROOT/home/.config/codex-room/model-instructions.md"
+for role in supervisor lead peer review; do
+  export_one "$HOME/.config/codex-room/overlays/$role.config.toml" "$REPO_ROOT/home/.config/codex-room/overlays/$role.config.toml"
+done
+for name in WORKSPACE_PROTOCOL.md ANTI_PATTERNS.md SUPERVISOR_NOTEBOOK.md; do
+  export_one "$HOME/.config/codex-room/workflow/$name" "$REPO_ROOT/home/.config/codex-room/workflow/$name"
+done
+for name in codex-room codex-room-sync codex-room-hard-cut codex-review-apply paseo-local-update; do
+  export_one "$HOME/.local/bin/$name" "$REPO_ROOT/home/.local/bin/$name"
+done
+export_one "$HOME/.paseo/config.json" "$REPO_ROOT/home/.paseo/config.json.template"
+
+log "EXPORT_COMPLETE"
+

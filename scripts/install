@@ -1,0 +1,104 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/common.sh"
+
+apply=false
+for argument in "$@"; do
+  case "$argument" in
+    --apply) apply=true ;;
+    --dry-run) apply=false ;;
+    -h|--help)
+      cat <<'EOF'
+Usage: scripts/install [--dry-run|--apply]
+
+Dry-run is the default. --apply backs up replaced files and installs the
+tracked HOME mirror. The script never writes to ~/.codex or ~/.codex-runtime.
+EOF
+      exit 0
+      ;;
+    *) die "unknown argument: $argument" ;;
+  esac
+done
+
+require_command python3
+
+timestamp=$(date -u +%Y%m%dT%H%M%SZ)
+backup_root="$HOME/.codex-room-backups/install-${timestamp}"
+changed=0
+
+install_one() {
+  local relative_source="$1"
+  local relative_target="$2"
+  local mode="$3"
+  local source_path="$REPO_ROOT/home/$relative_source"
+  local target_path="$HOME/$relative_target"
+  local temporary
+
+  [[ -f "$source_path" ]] || die "source file is missing: $source_path"
+  temporary=$(mktemp "${TMPDIR:-/tmp}/codex-room-install.XXXXXX")
+  render_home_tokens "$source_path" "$temporary"
+
+  if [[ -f "$target_path" ]] && cmp -s "$temporary" "$target_path"; then
+    log "UNCHANGED  ~/$relative_target"
+    rm -f "$temporary"
+    return
+  fi
+
+  changed=$((changed + 1))
+  if [[ "$apply" != true ]]; then
+    if [[ -e "$target_path" || -L "$target_path" ]]; then
+      log "REPLACE    ~/$relative_target"
+    else
+      log "CREATE     ~/$relative_target"
+    fi
+    rm -f "$temporary"
+    return
+  fi
+
+  if [[ -e "$target_path" || -L "$target_path" ]]; then
+    local backup_path="$backup_root/$relative_target"
+    mkdir -p "$(dirname "$backup_path")"
+    cp -p "$target_path" "$backup_path"
+  fi
+
+  mkdir -p "$(dirname "$target_path")"
+  install -m "$mode" "$temporary" "$target_path"
+  rm -f "$temporary"
+  log "INSTALLED  ~/$relative_target"
+}
+
+while IFS='|' read -r source target mode; do
+  [[ -n "$source" ]] || continue
+  install_one "$source" "$target" "$mode"
+done <<'EOF'
+.config/codex-room/model-instructions.md|.config/codex-room/model-instructions.md|644
+.config/codex-room/overlays/supervisor.config.toml|.config/codex-room/overlays/supervisor.config.toml|600
+.config/codex-room/overlays/lead.config.toml|.config/codex-room/overlays/lead.config.toml|600
+.config/codex-room/overlays/peer.config.toml|.config/codex-room/overlays/peer.config.toml|600
+.config/codex-room/overlays/review.config.toml|.config/codex-room/overlays/review.config.toml|600
+.config/codex-room/workflow/WORKSPACE_PROTOCOL.md|.config/codex-room/workflow/WORKSPACE_PROTOCOL.md|644
+.config/codex-room/workflow/ANTI_PATTERNS.md|.config/codex-room/workflow/ANTI_PATTERNS.md|644
+.config/codex-room/workflow/SUPERVISOR_NOTEBOOK.md|.config/codex-room/workflow/SUPERVISOR_NOTEBOOK.md|644
+.config/codex-room/paseo.phase2-coexist.candidate.json.template|.config/codex-room/paseo.phase2-coexist.candidate.json|600
+.config/codex-room/paseo.phase2-hard-cut.candidate.json.template|.config/codex-room/paseo.phase2-hard-cut.candidate.json|600
+.local/bin/codex-room|.local/bin/codex-room|755
+.local/bin/codex-room-sync|.local/bin/codex-room-sync|755
+.local/bin/codex-room-hard-cut|.local/bin/codex-room-hard-cut|700
+.local/bin/codex-review-apply|.local/bin/codex-review-apply|700
+.local/bin/paseo-local-update|.local/bin/paseo-local-update|755
+.paseo/config.json.template|.paseo/config.json|600
+EOF
+
+if [[ "$apply" != true ]]; then
+  log ""
+  log "DRY_RUN: $changed file(s) would change. Run scripts/install --apply to install."
+  exit 0
+fi
+
+if [[ -d "$backup_root" ]]; then
+  chmod -R go-rwx "$backup_root"
+  log "BACKUP     $backup_root"
+fi
+log "INSTALL_COMPLETE: $changed file(s) changed"
+log "Next: scripts/sync-all"

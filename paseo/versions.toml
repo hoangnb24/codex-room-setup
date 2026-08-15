@@ -1,0 +1,7 @@
+[verified]
+paseo = "0.4.0"
+codex_cli = "0.147.0"
+
+# Node and npm are intentionally not pinned here. Use the versions supported
+# by the fork's package.json/package manager metadata.
+

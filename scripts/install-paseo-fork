@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/common.sh"
+
+require_command git
+
+fork_url="${PASEO_FORK_URL:-git@github.com:hoangnb24/paseo.git}"
+upstream_url="${PASEO_UPSTREAM_URL:-git@github.com:getpaseo/paseo.git}"
+target="${PASEO_REPO_DIR:-$HOME/projects/supervisors/paseo}"
+branch="${PASEO_BRANCH:-main}"
+
+if [[ -e "$target" && ! -d "$target/.git" ]]; then
+  die "target exists but is not a Git checkout: $target"
+fi
+
+if [[ ! -d "$target/.git" ]]; then
+  mkdir -p "$(dirname "$target")"
+  log "CLONE  $fork_url -> $target"
+  git clone --branch "$branch" "$fork_url" "$target"
+else
+  log "FOUND  $target"
+fi
+
+current_fork=$(git -C "$target" remote get-url hoangnb24 2>/dev/null || true)
+if [[ -z "$current_fork" ]]; then
+  git -C "$target" remote add hoangnb24 "$fork_url"
+elif [[ "$current_fork" != "$fork_url" ]]; then
+  warn "hoangnb24 remote differs: $current_fork"
+fi
+
+current_upstream=$(git -C "$target" remote get-url origin 2>/dev/null || true)
+if [[ -z "$current_upstream" ]]; then
+  git -C "$target" remote add origin "$upstream_url"
+elif [[ "$current_upstream" != "$upstream_url" ]]; then
+  warn "origin remote differs: $current_upstream"
+fi
+
+log "PASEO_FORK_READY"
+log "path=$target"
+log "branch=$(git -C "$target" branch --show-current)"
+log "commit=$(git -C "$target" rev-parse HEAD)"
+

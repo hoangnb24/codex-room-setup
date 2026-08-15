@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+role="${1:?usage: codex-room <supervisor|lead|peer|review> [codex args...]}"
+shift
+
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+sync_bin="${CODEX_ROOM_SYNC_BIN:-${script_dir}/codex-room-sync}"
+if [[ -n "${CODEX_ROOM_LAB_ROOT:-}" ]]; then
+  runtime_root="${CODEX_ROOM_RUNTIME_ROOT:-${CODEX_ROOM_LAB_ROOT}/.runtime}"
+else
+  runtime_root="${CODEX_ROOM_RUNTIME_ROOT:-${HOME}/.codex-runtime}"
+fi
+
+"${sync_bin}" "${role}"
+export CODEX_HOME="${runtime_root}/${role}"
+codex_bin="${CODEX_BIN:-$(command -v codex)}"
+exec "${codex_bin}" "$@"

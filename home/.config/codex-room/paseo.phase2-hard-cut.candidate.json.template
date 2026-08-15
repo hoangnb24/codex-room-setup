@@ -1,0 +1,212 @@
+{
+  "version": 1,
+  "daemon": {
+    "listen": "127.0.0.1:6767",
+    "mcp": {
+      "injectIntoAgents": true,
+      "enabled": true,
+      "injectIntoProviders": [
+        "codex-supervisor",
+        "codex-lead"
+      ]
+    },
+    "browserTools": {
+      "enabled": false
+    },
+    "autoArchiveAfterMerge": false,
+    "enableTerminalAgentHooks": false,
+    "appendSystemPrompt": "",
+    "terminalProfiles": [
+      {
+        "id": "codex",
+        "name": "Codex",
+        "command": "codex",
+        "icon": "codex"
+      },
+      {
+        "id": "claude",
+        "name": "Claude Code",
+        "command": "claude",
+        "icon": "claude"
+      },
+      {
+        "id": "opencode",
+        "name": "OpenCode",
+        "command": "opencode",
+        "icon": "opencode"
+      }
+    ],
+    "cors": {
+      "allowedOrigins": [
+        "https://app.paseo.sh"
+      ]
+    },
+    "relay": {
+      "enabled": true
+    }
+  },
+  "app": {
+    "baseUrl": "https://app.paseo.sh"
+  },
+  "agents": {
+    "providers": {
+      "codex-supervisor": {
+        "extends": "codex",
+        "label": "Codex Supervisor",
+        "description": "Portfolio governance seat using isolated Codex Room runtime",
+        "command": [
+          "@@HOME@@/.local/bin/codex-room",
+          "supervisor"
+        ],
+        "params": {
+          "sandbox_mode": "danger-full-access",
+          "approval_policy": "never"
+        },
+        "models": [
+          {
+            "id": "gpt-5.6-sol",
+            "label": "Sol Medium",
+            "isDefault": true,
+            "thinkingOptions": [
+              {
+                "id": "medium",
+                "label": "Medium",
+                "isDefault": true
+              }
+            ]
+          }
+        ]
+      },
+      "codex-peer": {
+        "extends": "codex",
+        "label": "Codex Peer",
+        "description": "Bounded engineering seat without Paseo orchestration tools",
+        "command": [
+          "@@HOME@@/.local/bin/codex-room",
+          "peer"
+        ],
+        "params": {
+          "sandbox_mode": "danger-full-access",
+          "approval_policy": "never"
+        },
+        "models": [
+          {
+            "id": "gpt-5.6-sol",
+            "label": "Sol Medium",
+            "isDefault": true,
+            "thinkingOptions": [
+              {
+                "id": "medium",
+                "label": "Medium",
+                "isDefault": true
+              }
+            ]
+          },
+          {
+            "id": "gpt-5.6-luna",
+            "label": "Luna Max",
+            "thinkingOptions": [
+              {
+                "id": "max",
+                "label": "Max",
+                "isDefault": true
+              }
+            ]
+          }
+        ]
+      },
+      "codex-review": {
+        "extends": "codex",
+        "label": "Codex Review",
+        "description": "Read-only stable-candidate reviewer under Lead authority",
+        "command": [
+          "@@HOME@@/.local/bin/codex-room",
+          "review"
+        ],
+        "params": {
+          "sandbox_mode": "danger-full-access",
+          "approval_policy": "never"
+        },
+        "models": [
+          {
+            "id": "gpt-5.6-luna",
+            "label": "Luna Max",
+            "isDefault": true,
+            "thinkingOptions": [
+              {
+                "id": "max",
+                "label": "Max",
+                "isDefault": true
+              }
+            ]
+          }
+        ]
+      },
+      "grok": {
+        "extends": "acp",
+        "label": "Grok",
+        "description": "xAI's Grok Build agentic coding CLI with plan mode and parallel subagents. Requires a SuperGrok or X Premium+ subscription.",
+        "command": [
+          "grok",
+          "agent",
+          "stdio"
+        ],
+        "env": {}
+      },
+      "pi": {
+        "enabled": true
+      },
+      "opencode": {
+        "enabled": false
+      },
+      "copilot": {
+        "enabled": false
+      },
+      "hermes": {
+        "extends": "acp",
+        "label": "Hermes",
+        "description": "Nous Research self-improving AI agent",
+        "command": [
+          "hermes",
+          "acp"
+        ],
+        "env": {}
+      },
+      "codex-lead": {
+        "extends": "codex",
+        "label": "Codex Lead",
+        "description": "Project technical authority using isolated Codex Room runtime",
+        "command": [
+          "@@HOME@@/.local/bin/codex-room",
+          "lead"
+        ],
+        "params": {
+          "sandbox_mode": "danger-full-access",
+          "approval_policy": "never"
+        },
+        "models": [
+          {
+            "id": "gpt-5.6-sol",
+            "label": "Sol Medium",
+            "isDefault": true,
+            "thinkingOptions": [
+              {
+                "id": "medium",
+                "label": "Medium",
+                "isDefault": true
+              }
+            ]
+          }
+        ]
+      }
+    }
+  },
+  "features": {
+    "dictation": {
+      "enabled": false
+    },
+    "voiceMode": {
+      "enabled": false
+    }
+  }
+}

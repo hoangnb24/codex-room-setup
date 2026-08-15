@@ -1,0 +1,243 @@
+#!/usr/bin/env python3
+"""Materialize an isolated Supervisor, Lead, Peer, or Review CODEX_HOME."""
+
+import json
+import os
+import pathlib
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+
+
+ROLE_FILES = {
+    "supervisor": "supervisor.config.toml",
+    "lead": "lead.config.toml",
+    "peer": "peer.config.toml",
+    "review": "review.config.toml",
+}
+OVERRIDE_KEYS = {
+    "model",
+    "model_instructions_file",
+    "model_reasoning_effort",
+    "sandbox_mode",
+    "approval_policy",
+    "approvals_reviewer",
+}
+SHARED_CODEX_RESOURCES = ("auth.json", "AGENTS.md", "hooks.json", "skills", "plugins")
+SHARED_ROOM_RESOURCES = ("model-instructions.md",)
+SHARED_WORKFLOW_RESOURCES = (
+    "WORKSPACE_PROTOCOL.md",
+    "ANTI_PATTERNS.md",
+)
+
+
+def resolved_path(env_name: str, default: pathlib.Path) -> pathlib.Path:
+    configured = os.environ.get(env_name)
+    return pathlib.Path(configured).expanduser().resolve() if configured else default.resolve()
+
+
+def deployment_paths() -> dict[str, pathlib.Path]:
+    lab = os.environ.get("CODEX_ROOM_LAB_ROOT")
+    if lab:
+        root = pathlib.Path(lab).expanduser().resolve()
+        return {
+            "base": root / "canonical" / "config.toml",
+            "overlays": root / "canonical",
+            "codex_shared": root / "canonical",
+            "room_shared": root / "canonical",
+            "workflow": root / "room-workflow",
+            "runtime": resolved_path("CODEX_ROOM_RUNTIME_ROOT", root / ".runtime"),
+        }
+
+    home = pathlib.Path.home()
+    codex_home = resolved_path("CODEX_ROOM_CANONICAL_HOME", home / ".codex")
+    room_config = resolved_path("CODEX_ROOM_CONFIG_HOME", home / ".config" / "codex-room")
+    return {
+        "base": codex_home / "config.toml",
+        "overlays": room_config / "overlays",
+        "codex_shared": codex_home,
+        "room_shared": room_config,
+        "workflow": room_config / "workflow",
+        "runtime": resolved_path("CODEX_ROOM_RUNTIME_ROOT", home / ".codex-runtime"),
+    }
+
+
+def top_level_table_offset(text: str) -> int:
+    match = re.search(r"(?m)^\[", text)
+    return match.start() if match else len(text)
+
+
+def developer_block(text: str) -> str:
+    match = re.search(r'(?ms)^developer_instructions\s*=\s*""".*?^"""\s*$', text)
+    return (match.group(0).rstrip() + "\n") if match else ""
+
+
+def scalar_overrides(text: str) -> dict[str, str]:
+    prefix = text[:top_level_table_offset(text)]
+    values: dict[str, str] = {}
+    for line in prefix.splitlines():
+        match = re.match(r"^([A-Za-z0-9_]+)\s*=\s*(.+)$", line)
+        if match and match.group(1) in OVERRIDE_KEYS:
+            values[match.group(1)] = match.group(2)
+    return values
+
+
+def apply_scalar_overrides(base_head: str, values: dict[str, str]) -> str:
+    lines = base_head.rstrip().splitlines()
+    seen: set[str] = set()
+    rendered: list[str] = []
+    for line in lines:
+        match = re.match(r"^([A-Za-z0-9_]+)\s*=", line)
+        if match and match.group(1) in values:
+            key = match.group(1)
+            rendered.append(f"{key} = {values[key]}")
+            seen.add(key)
+        else:
+            rendered.append(line)
+    for key, value in values.items():
+        if key not in seen:
+            rendered.append(f"{key} = {value}")
+    return "\n".join(rendered).rstrip() + "\n\n"
+
+
+def set_table_scalar(text: str, table: str, key: str, value: str) -> str:
+    table_header = rf"(?m)^\[{re.escape(table)}\]\s*$"
+    match = re.search(table_header, text)
+    if not match:
+        return text.rstrip() + f"\n\n[{table}]\n{key} = {value}\n"
+
+    next_table = re.search(r"(?m)^\[", text[match.end():])
+    section_end = match.end() + (next_table.start() if next_table else len(text[match.end():]))
+    section = text[match.end():section_end]
+    key_pattern = rf"(?m)^{re.escape(key)}\s*=.*$"
+    if re.search(key_pattern, section):
+        section = re.sub(key_pattern, f"{key} = {value}", section, count=1)
+    else:
+        section = section.rstrip() + f"\n{key} = {value}\n\n"
+    return text[:match.end()] + section + text[section_end:]
+
+
+def strip_mcp_server_tables(text: str) -> str:
+    """Remove every mcp_servers table and its body from a merged config."""
+    mcp_header = re.compile(r"^\s*\[\[?\s*mcp_servers(?:\.|\s*\])")
+    table_header = re.compile(r"^\s*\[\[?")
+    rendered: list[str] = []
+    skipping = False
+    for line in text.splitlines(keepends=True):
+        if mcp_header.match(line):
+            skipping = True
+            continue
+        if skipping and table_header.match(line):
+            skipping = False
+        if not skipping:
+            rendered.append(line)
+    return "".join(rendered)
+
+
+def safe_link(runtime: pathlib.Path, name: str, target: pathlib.Path) -> None:
+    if not target.exists():
+        raise SystemExit(f"shared target does not exist: {target}")
+    path = runtime / name
+    if path.is_symlink() and path.resolve() == target.resolve():
+        return
+    if path.exists() and not path.is_symlink():
+        raise SystemExit(f"refusing to replace non-symlink runtime path: {path}")
+    if path.is_symlink():
+        path.unlink()
+    path.symlink_to(target)
+
+
+def source_catalog() -> dict:
+    fixture = os.environ.get("CODEX_ROOM_MODEL_CATALOG")
+    if fixture:
+        return json.loads(pathlib.Path(fixture).read_text())
+    codex_bin = os.environ.get("CODEX_BIN") or shutil.which("codex")
+    if not codex_bin:
+        raise SystemExit("codex not found; set CODEX_BIN or CODEX_ROOM_MODEL_CATALOG")
+    result = subprocess.run(
+        [codex_bin, "debug", "models"],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return json.loads(result.stdout)
+
+
+def write_catalog(runtime: pathlib.Path) -> pathlib.Path:
+    catalog = source_catalog()
+    models = catalog.get("models")
+    if not isinstance(models, list) or not models:
+        raise SystemExit("source model catalog contains no models")
+    for model in models:
+        if not isinstance(model, dict):
+            raise SystemExit("source model catalog contains an invalid model")
+        model["multi_agent_version"] = None
+    target = runtime / "model-catalog.no-native-agents.json"
+    write_atomic(target, json.dumps(catalog, separators=(",", ":")) + "\n")
+    return target
+
+
+def write_atomic(target: pathlib.Path, content: str) -> None:
+    fd, temporary = tempfile.mkstemp(prefix=f"{target.stem}.", suffix=target.suffix, dir=target.parent)
+    try:
+        with os.fdopen(fd, "w") as stream:
+            stream.write(content)
+        os.replace(temporary, target)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
+
+
+def main() -> None:
+    if len(sys.argv) != 2 or sys.argv[1] not in ROLE_FILES:
+        raise SystemExit(f"usage: {sys.argv[0]} <{'|'.join(ROLE_FILES)}>")
+    role = sys.argv[1]
+    paths = deployment_paths()
+    runtime_root = paths["runtime"]
+    runtime_root.mkdir(parents=True, exist_ok=True)
+    runtime_root.chmod(0o700)
+    runtime = runtime_root / role
+    runtime.mkdir(exist_ok=True)
+    runtime.chmod(0o700)
+
+    base = paths["base"].read_text()
+    overlay = (paths["overlays"] / ROLE_FILES[role]).read_text()
+    offset = top_level_table_offset(base)
+    overrides = scalar_overrides(overlay)
+    model_catalog = write_catalog(runtime)
+    overrides["model_catalog_json"] = json.dumps(str(model_catalog))
+    overrides["model_instructions_file"] = json.dumps(str(runtime / "model-instructions.md"))
+    head = apply_scalar_overrides(base[:offset], overrides)
+    tail = base[offset:]
+    instructions = developer_block(overlay)
+    merged = head + (instructions + "\n" if instructions else "") + tail.lstrip()
+    if role == "review":
+        merged = strip_mcp_server_tables(merged)
+    merged = set_table_scalar(merged, "agents", "enabled", "false")
+    merged = set_table_scalar(merged, "features", "multi_agent", "false")
+    merged = set_table_scalar(merged, "features", "multi_agent_v2", "false")
+    write_atomic(runtime / "config.toml", merged)
+
+    for name in SHARED_CODEX_RESOURCES:
+        safe_link(runtime, name, paths["codex_shared"] / name)
+    for name in SHARED_ROOM_RESOURCES:
+        safe_link(runtime, name, paths["room_shared"] / name)
+    for name in SHARED_WORKFLOW_RESOURCES:
+        safe_link(runtime, name, paths["workflow"] / name)
+    if role == "supervisor":
+        notebook = runtime / "SUPERVISOR_NOTEBOOK.md"
+        notebook_template = paths["workflow"] / "SUPERVISOR_NOTEBOOK.md"
+        if not notebook.exists():
+            if not notebook_template.exists():
+                raise SystemExit(f"Supervisor notebook template does not exist: {notebook_template}")
+            write_atomic(notebook, notebook_template.read_text())
+
+    # App-server reserves stdout for its JSONL protocol. Keep sync diagnostics on
+    # stderr so the launcher cannot corrupt the provider stream.
+    print(runtime, file=sys.stderr)
+
+
+if __name__ == "__main__":
+    main()

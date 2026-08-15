@@ -1,0 +1,90 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+live_config="${PASEO_LIVE_CONFIG:-$HOME/.paseo/config.json}"
+candidate="${CODEX_ROOM_PASEO_CANDIDATE:-$HOME/.config/codex-room/paseo.phase2-hard-cut.candidate.json}"
+backup_root="${CODEX_ROOM_BACKUP_ROOT:-$HOME/.codex-room-backups/2026-08-04-hard-cut}"
+backup_config="$backup_root/paseo.config.pre-apply.json"
+expected_live_sha="24f6a056ecacb5c04a029257536f8e67e1eb912dc49c9627ceb869da277baedf"
+expected_candidate_sha="d391950e13cb89911223f31c7c279f70a7cf83f8b3a63ceefc796441c803ca80"
+
+sha256() {
+  shasum -a 256 "$1" | awk '{print $1}'
+}
+
+fail() {
+  printf 'ERROR: %s\n' "$1" >&2
+  exit 1
+}
+
+[[ -f "$live_config" ]] || fail "live config not found: $live_config"
+[[ -f "$candidate" ]] || fail "candidate not found: $candidate"
+[[ -d "$backup_root" ]] || fail "backup root not found: $backup_root"
+[[ ! -e "$backup_config" ]] || fail "pre-apply backup already exists: $backup_config"
+
+actual_live_sha=$(sha256 "$live_config")
+actual_candidate_sha=$(sha256 "$candidate")
+[[ "$actual_live_sha" == "$expected_live_sha" ]] || \
+  fail "live config drifted; expected $expected_live_sha, got $actual_live_sha"
+[[ "$actual_candidate_sha" == "$expected_candidate_sha" ]] || \
+  fail "candidate changed; expected $expected_candidate_sha, got $actual_candidate_sha"
+
+running_agents=$(paseo --json agent ls | jq '[.[] | select(.status == "running")] | length')
+[[ "$running_agents" == "0" ]] || \
+  fail "$running_agents Paseo agent(s) are still running; close them before hard cut"
+
+jq -e '
+  (.agents.providers | has("codex-root") | not)
+  and (.agents.providers | has("codex-supervisor"))
+  and (.agents.providers | has("codex-lead"))
+  and (.agents.providers | has("codex-peer"))
+  and (.daemon.mcp.injectIntoProviders == ["codex-supervisor", "codex-lead"])
+' "$candidate" >/dev/null || fail "candidate role or MCP boundary is invalid"
+
+cp -p "$live_config" "$backup_config"
+chmod 600 "$backup_config"
+temporary_config=$(mktemp "$HOME/.paseo/config.hard-cut.XXXXXX")
+cp "$candidate" "$temporary_config"
+chmod 600 "$temporary_config"
+mv "$temporary_config" "$live_config"
+
+rollback() {
+  printf 'Hard-cut verification failed; restoring pre-apply config.\n' >&2
+  rollback_temp=$(mktemp "$HOME/.paseo/config.rollback.XXXXXX")
+  cp "$backup_config" "$rollback_temp"
+  chmod 600 "$rollback_temp"
+  mv "$rollback_temp" "$live_config"
+  paseo daemon restart --home "$HOME/.paseo" --timeout 15 --json >&2 || true
+}
+
+if ! paseo daemon restart --home "$HOME/.paseo" --timeout 15 --json; then
+  rollback
+  fail "Paseo restart failed; legacy config restored"
+fi
+
+inventory_file=$(mktemp "${TMPDIR:-/tmp}/codex-room-provider-inventory.XXXXXX")
+providers_ready=false
+for _attempt in {1..20}; do
+  if paseo provider ls --host 127.0.0.1:6767 --json > "$inventory_file" 2>/dev/null \
+    && jq -e '
+      (map(select(.provider == "codex-root")) | length == 0)
+      and (map(select(.provider == "codex-supervisor" and .status == "available")) | length == 1)
+      and (map(select(.provider == "codex-lead" and .status == "available")) | length == 1)
+      and (map(select(.provider == "codex-peer" and .status == "available")) | length == 1)
+    ' "$inventory_file" >/dev/null; then
+    providers_ready=true
+    break
+  fi
+  sleep 1
+done
+
+if [[ "$providers_ready" != true ]]; then
+  rollback
+  fail "new provider inventory did not become available; legacy config restored"
+fi
+
+rm -f "$inventory_file"
+printf 'HARD_CUT_COMPLETE\n'
+printf 'live_sha256=%s\n' "$(sha256 "$live_config")"
+printf 'backup=%s\n' "$backup_config"
+printf 'providers=codex-supervisor,codex-lead,codex-peer\n'
