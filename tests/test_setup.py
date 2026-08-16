@@ -15,6 +15,8 @@ HOME_MIRROR = ROOT / "home"
 ROOM = HOME_MIRROR / ".config" / "codex-room"
 PASEO_TEMPLATE = HOME_MIRROR / ".paseo" / "config.json.template"
 SYNC = HOME_MIRROR / ".local" / "bin" / "codex-room-sync"
+SESSION_USAGE = ROOT / "scripts" / "session-usage"
+WORKFLOW_PILOT_REPORT = ROOT / "scripts" / "workflow-pilot-report"
 
 
 class SetupShapeTests(unittest.TestCase):
@@ -92,8 +94,83 @@ class SetupShapeTests(unittest.TestCase):
             self.assertTrue(paseo_config.is_file())
             self.assertNotIn("@@HOME@@", paseo_config.read_text())
             self.assertIn(str(fake_home / ".local" / "bin" / "codex-room"), paseo_config.read_text())
+            protocol = fake_home / ".config" / "codex-room" / "workflow" / "WORKSPACE_PROTOCOL.md"
+            self.assertTrue(protocol.is_file())
+            self.assertIn("FRONTIER_BRIEF v1", protocol.read_text())
             self.assertFalse((fake_home / ".codex").exists())
             self.assertFalse((fake_home / ".codex-runtime").exists())
+
+    def test_session_usage_reports_requests_tools_tokens_and_cost(self) -> None:
+        fixture = ROOT / "tests" / "fixtures" / "session-usage.jsonl"
+        completed = subprocess.run(
+            [
+                str(SESSION_USAGE),
+                "--format",
+                "json",
+                "--input-rate",
+                "5",
+                "--cached-input-rate",
+                "0.5",
+                "--output-rate",
+                "30",
+                str(fixture),
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        summary = json.loads(completed.stdout)
+
+        self.assertEqual(summary["session_id"], "fixture-session")
+        self.assertEqual(summary["timing"]["duration_ms"], 5000)
+        self.assertEqual(summary["model_requests"], 2)
+        self.assertEqual(summary["tools"]["invocations"], 2)
+        self.assertEqual(summary["usage"]["cumulative"]["total_tokens"], 2800)
+        self.assertEqual(
+            summary["usage"]["final_request"]["context_window_used_tokens"],
+            1700,
+        )
+        self.assertAlmostEqual(summary["estimated_api_cost_usd"], 0.017)
+
+    def test_workflow_pilot_report_counts_only_assistant_markers(self) -> None:
+        fixture = ROOT / "tests" / "fixtures" / "workflow-pilot.jsonl"
+        completed = subprocess.run(
+            [str(WORKFLOW_PILOT_REPORT), "--format", "json", str(fixture)],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        summary = json.loads(completed.stdout)
+
+        self.assertEqual(summary["assistant_messages_scanned"], 4)
+        self.assertEqual(summary["markers"]["FRONTIER_BRIEF v1"], 1)
+        self.assertEqual(summary["markers"]["PLAN_RECONCILIATION v1"], 1)
+        self.assertEqual(summary["peer_dispositions"]["REOPEN_REQUEST"], 1)
+        self.assertEqual(summary["lead_rulings"]["REVISE_PLAN"], 1)
+        self.assertEqual(summary["foundation_statuses"]["FOUNDATION_REQUIRED"], 1)
+        self.assertEqual(summary["parallel_decisions"]["SERIAL"], 1)
+        self.assertEqual(summary["reconciliation_plan_updates"]["yes"], 1)
+        self.assertEqual(summary["warnings"], [])
+
+    def test_workflow_pilot_contracts_are_present_in_protocol_and_roles(self) -> None:
+        protocol = (ROOM / "workflow" / "WORKSPACE_PROTOCOL.md").read_text()
+        for marker in (
+            "FRONTIER_BRIEF v1",
+            "FOUNDATION_CHECK v1",
+            "PEER_DISPOSITION v1",
+            "LEAD_RULING v1",
+            "PLAN_RECONCILIATION v1",
+            "PARALLEL_CHECK v1",
+        ):
+            self.assertIn(marker, protocol)
+
+        lead = (ROOM / "overlays" / "lead.config.toml").read_text()
+        peer = (ROOM / "overlays" / "peer.config.toml").read_text()
+        supervisor = (ROOM / "overlays" / "supervisor.config.toml").read_text()
+        self.assertIn("FOUNDATION_CHECK v1", lead)
+        self.assertIn("PLAN_RECONCILIATION v1", lead)
+        self.assertIn("PEER_DISPOSITION v1", peer)
+        self.assertIn("workflow pilot", supervisor)
 
 
 class RuntimeGenerationTests(unittest.TestCase):
@@ -163,6 +240,7 @@ class RuntimeGenerationTests(unittest.TestCase):
             self.assertIn("multi_agent = false", config)
             self.assertIn("multi_agent_v2 = false", config)
             self.assertTrue((runtime / "skills").is_symlink())
+            self.assertTrue((runtime / "WORKSPACE_PROTOCOL.md").is_symlink())
             catalog = json.loads((runtime / "model-catalog.no-native-agents.json").read_text())
             self.assertTrue(all(model["multi_agent_version"] is None for model in catalog["models"]))
 

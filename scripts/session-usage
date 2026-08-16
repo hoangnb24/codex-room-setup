@@ -1,0 +1,284 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/common.sh"
+
+usage() {
+  cat <<'EOF'
+Usage:
+  session-usage [options] SESSION_JSONL
+  session-usage [options] --role ROLE --session-id UUID
+
+Summarize timing, model requests, token usage, tool calls, and optional
+API-equivalent cost for one Codex rollout JSONL session.
+
+Options:
+  --format text|json          Output format (default: text)
+  --role ROLE                Runtime role used to locate the session
+  --session-id UUID          Codex session UUID used with --role
+  --runtime-root PATH        Runtime root (default: ~/.codex-runtime)
+  --input-rate RATE          Uncached input USD per 1M tokens
+  --cached-input-rate RATE   Cached input USD per 1M tokens
+  --output-rate RATE         Output USD per 1M tokens
+  --cache-write-rate RATE    Cache-write USD per 1M tokens, when present
+  -h, --help                 Show this help
+
+All three input, cached-input, and output rates must be supplied together.
+Rates are never hard-coded because model pricing changes.
+EOF
+}
+
+format="text"
+role=""
+session_id=""
+runtime_root="${CODEX_ROOM_RUNTIME_ROOT:-$HOME/.codex-runtime}"
+session_file=""
+input_rate=""
+cached_input_rate=""
+output_rate=""
+cache_write_rate=""
+
+is_nonnegative_number() {
+  [[ "$1" =~ ^[0-9]+([.][0-9]+)?$ ]]
+}
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --format)
+      [[ $# -ge 2 ]] || die "--format requires a value"
+      format="$2"
+      shift 2
+      ;;
+    --role)
+      [[ $# -ge 2 ]] || die "--role requires a value"
+      role="$2"
+      shift 2
+      ;;
+    --session-id)
+      [[ $# -ge 2 ]] || die "--session-id requires a value"
+      session_id="$2"
+      shift 2
+      ;;
+    --runtime-root)
+      [[ $# -ge 2 ]] || die "--runtime-root requires a value"
+      runtime_root="$2"
+      shift 2
+      ;;
+    --input-rate)
+      [[ $# -ge 2 ]] || die "--input-rate requires a value"
+      input_rate="$2"
+      shift 2
+      ;;
+    --cached-input-rate)
+      [[ $# -ge 2 ]] || die "--cached-input-rate requires a value"
+      cached_input_rate="$2"
+      shift 2
+      ;;
+    --output-rate)
+      [[ $# -ge 2 ]] || die "--output-rate requires a value"
+      output_rate="$2"
+      shift 2
+      ;;
+    --cache-write-rate)
+      [[ $# -ge 2 ]] || die "--cache-write-rate requires a value"
+      cache_write_rate="$2"
+      shift 2
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    --*)
+      die "unknown option: $1"
+      ;;
+    *)
+      [[ -z "$session_file" ]] || die "only one SESSION_JSONL may be supplied"
+      session_file="$1"
+      shift
+      ;;
+  esac
+done
+
+require_command jq
+
+[[ "$format" == "text" || "$format" == "json" ]] || die "--format must be text or json"
+
+rate_count=0
+for rate in "$input_rate" "$cached_input_rate" "$output_rate"; do
+  [[ -z "$rate" ]] || rate_count=$((rate_count + 1))
+done
+[[ "$rate_count" -eq 0 || "$rate_count" -eq 3 ]] \
+  || die "supply --input-rate, --cached-input-rate, and --output-rate together"
+
+for rate in "$input_rate" "$cached_input_rate" "$output_rate" "$cache_write_rate"; do
+  [[ -z "$rate" ]] || is_nonnegative_number "$rate" || die "invalid non-negative rate: $rate"
+done
+
+if [[ -n "$session_file" && ( -n "$role" || -n "$session_id" ) ]]; then
+  die "use either SESSION_JSONL or --role with --session-id"
+fi
+
+if [[ -z "$session_file" ]]; then
+  [[ -n "$role" && -n "$session_id" ]] || die "supply SESSION_JSONL or both --role and --session-id"
+  sessions_root="$runtime_root/$role/sessions"
+  [[ -d "$sessions_root" ]] || die "sessions directory is missing: $sessions_root"
+  session_file=$(find "$sessions_root" -type f -name "*-${session_id}.jsonl" -print -quit)
+  [[ -n "$session_file" ]] || die "session not found for role=$role id=$session_id"
+fi
+
+[[ -f "$session_file" ]] || die "session file is missing: $session_file"
+jq -e -s 'length > 0' "$session_file" >/dev/null || die "session file has no JSON events"
+
+if [[ -n "$input_rate" ]]; then
+  input_rate_json="$input_rate"
+  cached_input_rate_json="$cached_input_rate"
+  output_rate_json="$output_rate"
+else
+  input_rate_json="null"
+  cached_input_rate_json="null"
+  output_rate_json="null"
+fi
+
+if [[ -n "$cache_write_rate" ]]; then
+  cache_write_rate_json="$cache_write_rate"
+else
+  cache_write_rate_json="null"
+fi
+
+summary=$(jq -s \
+  --arg session_file "$session_file" \
+  --argjson input_rate "$input_rate_json" \
+  --argjson cached_input_rate "$cached_input_rate_json" \
+  --argjson output_rate "$output_rate_json" \
+  --argjson cache_write_rate "$cache_write_rate_json" '
+  def events($event_type):
+    map(select(.type == "event_msg" and .payload.type == $event_type));
+  def calls:
+    map(select(
+      .type == "response_item"
+      and (.payload.type | type == "string")
+      and (.payload.type | test("_call$"))
+    ));
+
+  (map(select(.type == "session_meta")) | first) as $meta
+  | (map(select(.type == "turn_context")) | last) as $turn
+  | events("task_started") as $started
+  | events("task_complete") as $completed
+  | (events("token_count") | map(select(.payload.info != null))) as $usage_events
+  | calls as $calls
+  | ($usage_events | last | .payload.info // {}) as $usage
+  | ($usage.total_token_usage // {}) as $total
+  | ($usage.last_token_usage // {}) as $last
+  | ($completed | last | .payload // {}) as $task
+  | (($total.input_tokens // 0) - ($total.cached_input_tokens // 0)) as $uncached_input
+  | ($total.cache_write_input_tokens // 0) as $cache_write
+  | (
+      if $input_rate == null then null
+      elif $cache_write > 0 and $cache_write_rate == null then null
+      else (
+        ($uncached_input * $input_rate)
+        + (($total.cached_input_tokens // 0) * $cached_input_rate)
+        + (($total.output_tokens // 0) * $output_rate)
+        + ($cache_write * ($cache_write_rate // 0))
+      ) / 1000000
+      end
+    ) as $cost
+  | {
+      schema_version: 1,
+      session_file: $session_file,
+      session_id: ($meta.payload.id // $meta.payload.session_id // null),
+      turn_id: ($task.turn_id // $turn.payload.turn_id // null),
+      model: ($turn.payload.model // null),
+      reasoning_effort: ($turn.payload.effort // null),
+      cwd: ($turn.payload.cwd // $meta.payload.cwd // null),
+      task_count: ($started | length),
+      completed_task_count: ($completed | length),
+      benchmark_single_task: (($started | length) == 1 and ($completed | length) == 1),
+      timing: {
+        started_at_epoch: ($task.started_at // null),
+        completed_at_epoch: ($task.completed_at // null),
+        duration_ms: ($task.duration_ms // null),
+        time_to_first_token_ms: ($task.time_to_first_token_ms // null)
+      },
+      model_requests: ($usage_events | length),
+      usage: {
+        cumulative: {
+          input_tokens: ($total.input_tokens // 0),
+          cached_input_tokens: ($total.cached_input_tokens // 0),
+          uncached_input_tokens: $uncached_input,
+          cache_write_input_tokens: $cache_write,
+          output_tokens: ($total.output_tokens // 0),
+          reasoning_output_tokens: ($total.reasoning_output_tokens // 0),
+          total_tokens: ($total.total_tokens // 0)
+        },
+        final_request: {
+          input_tokens: ($last.input_tokens // 0),
+          cached_input_tokens: ($last.cached_input_tokens // 0),
+          output_tokens: ($last.output_tokens // 0),
+          reasoning_output_tokens: ($last.reasoning_output_tokens // 0),
+          context_window_used_tokens: ($last.total_tokens // 0)
+        },
+        context_window_max_tokens: ($usage.model_context_window // null)
+      },
+      tools: {
+        invocations: ($calls | length),
+        outputs: (map(select(.type == "response_item" and (.payload.type | test("_call_output$")))) | length),
+        by_name: (
+          $calls
+          | map(.payload.name // .payload.type)
+          | group_by(.)
+          | map({name: .[0], count: length})
+        )
+      },
+      rates_usd_per_million_tokens: {
+        uncached_input: $input_rate,
+        cached_input: $cached_input_rate,
+        output: $output_rate,
+        cache_write: $cache_write_rate
+      },
+      estimated_api_cost_usd: $cost,
+      cost_complete: (
+        $cost != null
+        or ($input_rate == null and $cached_input_rate == null and $output_rate == null)
+      ),
+      warnings: (
+        []
+        + (if (($started | length) == 1 and ($completed | length) == 1)
+           then [] else ["benchmark sessions should contain exactly one completed task"] end)
+        + (if $cache_write > 0 and $input_rate != null and $cache_write_rate == null
+           then ["cache-write tokens exist but --cache-write-rate was not supplied"] else [] end)
+      )
+    }
+' "$session_file")
+
+if [[ "$format" == "json" ]]; then
+  jq . <<<"$summary"
+  exit 0
+fi
+
+jq -r '
+  def number: tostring;
+  def dollars:
+    if . == null then "not calculated"
+    else ((. * 1000000 | round) / 1000000 | tostring)
+    end;
+  "Session:              \(.session_id)",
+  "Model:                \(.model) (\(.reasoning_effort))",
+  "Tasks:                \(.completed_task_count)/\(.task_count) completed",
+  "Duration:             \(.timing.duration_ms // "unknown") ms",
+  "Time to first token:  \(.timing.time_to_first_token_ms // "unknown") ms",
+  "Model requests:       \(.model_requests)",
+  "Tool invocations:     \(.tools.invocations)",
+  "Cumulative tokens:    \(.usage.cumulative.total_tokens)",
+  "  uncached input:     \(.usage.cumulative.uncached_input_tokens)",
+  "  cached input:       \(.usage.cumulative.cached_input_tokens)",
+  "  output:             \(.usage.cumulative.output_tokens)",
+  "Final context used:   \(.usage.final_request.context_window_used_tokens)",
+  "Context window max:   \(.usage.context_window_max_tokens // "unknown")",
+  "Estimated API cost:   $\(.estimated_api_cost_usd | dollars)",
+  (if (.tools.by_name | length) > 0
+   then "Tools by name:        \(.tools.by_name | map("\(.name)=\(.count)") | join(", "))"
+   else "Tools by name:        none"
+   end),
+  (.warnings[]? | "WARNING: \(.)")
+' <<<"$summary"

@@ -35,19 +35,33 @@ check() {
 if [[ "$mode" == source ]]; then
   config_template="$REPO_ROOT/home/.paseo/config.json.template"
   overlays_root="$REPO_ROOT/home/.config/codex-room/overlays"
+  workflow_root="$REPO_ROOT/home/.config/codex-room/workflow"
   sync_path="$REPO_ROOT/home/.local/bin/codex-room-sync"
 else
   config_template="$HOME/.paseo/config.json"
   overlays_root="$HOME/.config/codex-room/overlays"
+  workflow_root="$HOME/.config/codex-room/workflow"
   sync_path="$HOME/.local/bin/codex-room-sync"
 fi
 
 check "Paseo config exists" test -f "$config_template"
 check "Paseo config is valid JSON" jq -e . "$config_template"
 check "room sync exists" test -f "$sync_path"
+check "workspace protocol exists" test -f "$workflow_root/WORKSPACE_PROTOCOL.md"
+check "workflow pilot reporter is executable" test -x "$REPO_ROOT/scripts/workflow-pilot-report"
 
 for role in supervisor lead peer review; do
   check "$role overlay exists" test -f "$overlays_root/$role.config.toml"
+done
+
+for marker in \
+  "FRONTIER_BRIEF v1" \
+  "FOUNDATION_CHECK v1" \
+  "PEER_DISPOSITION v1" \
+  "LEAD_RULING v1" \
+  "PLAN_RECONCILIATION v1" \
+  "PARALLEL_CHECK v1"; do
+  check "workspace protocol includes $marker" grep -Fq "$marker" "$workflow_root/WORKSPACE_PROTOCOL.md"
 done
 
 check "four derived Codex providers" jq -e '

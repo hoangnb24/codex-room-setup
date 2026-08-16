@@ -1,0 +1,230 @@
+#!/usr/bin/env python3
+"""Summarize codex-room workflow pilot markers without emitting rollout content."""
+
+from __future__ import annotations
+
+import argparse
+from collections import Counter
+import json
+from pathlib import Path
+import re
+import sys
+from typing import Any, Iterable
+
+
+MARKERS = (
+    "FRONTIER_BRIEF v1",
+    "FOUNDATION_CHECK v1",
+    "PEER_DISPOSITION v1",
+    "LEAD_RULING v1",
+    "PLAN_RECONCILIATION v1",
+    "PARALLEL_CHECK v1",
+)
+MARKER_PATTERN = re.compile(
+    r"^(?P<marker>" + "|".join(re.escape(marker) for marker in MARKERS) + r")\s*$",
+    re.MULTILINE,
+)
+
+ALLOWED_VALUES = {
+    "peer_dispositions": {"CANDIDATE", "REOPEN_REQUEST", "DEPENDENCY_REQUEST", "BLOCKED"},
+    "lead_rulings": {
+        "ACCEPT",
+        "CONTINUE",
+        "REVISE_PLAN",
+        "CREATE_DEPENDENCY",
+        "SPLIT",
+        "CANCEL",
+    },
+    "foundation_statuses": {"STABLE", "DISCOVERY_REQUIRED", "FOUNDATION_REQUIRED"},
+    "parallel_decisions": {"SERIAL", "PARALLEL"},
+    "reconciliation_plan_updates": {"yes", "no"},
+}
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description=(
+            "Count workflow pilot markers in Codex rollout JSONL files. "
+            "Only aggregate counts are emitted."
+        )
+    )
+    parser.add_argument("session_jsonl", nargs="+", type=Path, metavar="SESSION_JSONL")
+    parser.add_argument("--format", choices=("text", "json"), default="text")
+    return parser.parse_args()
+
+
+def assistant_text(record: dict[str, Any]) -> str | None:
+    if record.get("type") != "response_item":
+        return None
+    payload = record.get("payload")
+    if not isinstance(payload, dict):
+        return None
+    if payload.get("type") != "message" or payload.get("role") != "assistant":
+        return None
+    content = payload.get("content")
+    if not isinstance(content, list):
+        return None
+
+    chunks: list[str] = []
+    for item in content:
+        if isinstance(item, str):
+            chunks.append(item)
+        elif isinstance(item, dict) and item.get("type") == "output_text":
+            text = item.get("text")
+            if isinstance(text, str):
+                chunks.append(text)
+    return "".join(chunks) if chunks else None
+
+
+def load_assistant_messages(paths: Iterable[Path]) -> tuple[list[str], int]:
+    messages: list[str] = []
+    records_scanned = 0
+    for path in paths:
+        if not path.is_file():
+            raise ValueError(f"session file is missing: {path}")
+        with path.open() as stream:
+            for line_number, line in enumerate(stream, start=1):
+                if not line.strip():
+                    continue
+                records_scanned += 1
+                try:
+                    record = json.loads(line)
+                except json.JSONDecodeError as error:
+                    raise ValueError(f"invalid JSON at {path}:{line_number}: {error.msg}") from error
+                if not isinstance(record, dict):
+                    continue
+                text = assistant_text(record)
+                if text:
+                    messages.append(text)
+    return messages, records_scanned
+
+
+def field_value(block: str, field: str) -> str | None:
+    match = re.search(rf"^{re.escape(field)}:\s*([^\n]+?)\s*$", block, re.MULTILINE)
+    return match.group(1).strip() if match else None
+
+
+def marker_blocks(message: str) -> Iterable[tuple[str, str]]:
+    matches = list(MARKER_PATTERN.finditer(message))
+    for index, match in enumerate(matches):
+        end = matches[index + 1].start() if index + 1 < len(matches) else len(message)
+        yield match.group("marker"), message[match.start() : end]
+
+
+def empty_counter(values: set[str]) -> Counter[str]:
+    return Counter({value: 0 for value in sorted(values)})
+
+
+def build_summary(paths: list[Path], messages: list[str], records_scanned: int) -> dict[str, Any]:
+    markers = Counter({marker: 0 for marker in MARKERS})
+    peer_dispositions = empty_counter(ALLOWED_VALUES["peer_dispositions"])
+    lead_rulings = empty_counter(ALLOWED_VALUES["lead_rulings"])
+    foundation_statuses = empty_counter(ALLOWED_VALUES["foundation_statuses"])
+    parallel_decisions = empty_counter(ALLOWED_VALUES["parallel_decisions"])
+    reconciliation_updates = empty_counter(ALLOWED_VALUES["reconciliation_plan_updates"])
+    reconciliation_updates["unknown"] = 0
+    warnings: list[str] = []
+
+    for message in messages:
+        for marker, block in marker_blocks(message):
+            markers[marker] += 1
+            target: Counter[str] | None = None
+            field: str | None = None
+            allowed: set[str] | None = None
+            normalize = str.upper
+
+            if marker == "PEER_DISPOSITION v1":
+                target, field, allowed = peer_dispositions, "status", ALLOWED_VALUES["peer_dispositions"]
+            elif marker == "LEAD_RULING v1":
+                target, field, allowed = lead_rulings, "decision", ALLOWED_VALUES["lead_rulings"]
+            elif marker == "FOUNDATION_CHECK v1":
+                target, field, allowed = (
+                    foundation_statuses,
+                    "status",
+                    ALLOWED_VALUES["foundation_statuses"],
+                )
+            elif marker == "PARALLEL_CHECK v1":
+                target, field, allowed = (
+                    parallel_decisions,
+                    "decision",
+                    ALLOWED_VALUES["parallel_decisions"],
+                )
+            elif marker == "PLAN_RECONCILIATION v1":
+                target, field, allowed = (
+                    reconciliation_updates,
+                    "plan_updated",
+                    ALLOWED_VALUES["reconciliation_plan_updates"],
+                )
+                normalize = str.lower
+
+            if target is None or field is None or allowed is None:
+                continue
+            raw_value = field_value(block, field)
+            value = normalize(raw_value) if raw_value is not None else None
+            if value in allowed:
+                target[value] += 1
+            elif marker == "PLAN_RECONCILIATION v1":
+                target["unknown"] += 1
+                warnings.append("PLAN_RECONCILIATION v1 missing a valid plan_updated value")
+            else:
+                warnings.append(f"{marker} missing a valid {field} value")
+
+    if not messages:
+        warnings.append("no assistant response messages were found")
+
+    return {
+        "schema_version": 1,
+        "session_file_count": len(paths),
+        "records_scanned": records_scanned,
+        "assistant_messages_scanned": len(messages),
+        "markers": dict(markers),
+        "peer_dispositions": dict(peer_dispositions),
+        "lead_rulings": dict(lead_rulings),
+        "foundation_statuses": dict(foundation_statuses),
+        "parallel_decisions": dict(parallel_decisions),
+        "reconciliation_plan_updates": dict(reconciliation_updates),
+        "warnings": warnings,
+    }
+
+
+def render_text(summary: dict[str, Any]) -> str:
+    lines = [
+        f"Session files:       {summary['session_file_count']}",
+        f"Records scanned:     {summary['records_scanned']}",
+        f"Assistant messages:  {summary['assistant_messages_scanned']}",
+        "Markers:",
+    ]
+    for marker, count in summary["markers"].items():
+        lines.append(f"  {marker}: {count}")
+    for title, key in (
+        ("Peer dispositions", "peer_dispositions"),
+        ("Lead rulings", "lead_rulings"),
+        ("Foundation statuses", "foundation_statuses"),
+        ("Parallel decisions", "parallel_decisions"),
+        ("Reconciliation plan updates", "reconciliation_plan_updates"),
+    ):
+        values = summary[key]
+        rendered = ", ".join(f"{name}={count}" for name, count in values.items())
+        lines.append(f"{title}: {rendered}")
+    lines.extend(f"WARNING: {warning}" for warning in summary["warnings"])
+    return "\n".join(lines)
+
+
+def main() -> int:
+    args = parse_args()
+    try:
+        messages, records_scanned = load_assistant_messages(args.session_jsonl)
+        summary = build_summary(args.session_jsonl, messages, records_scanned)
+    except ValueError as error:
+        print(f"ERROR: {error}", file=sys.stderr)
+        return 1
+
+    if args.format == "json":
+        print(json.dumps(summary, indent=2, sort_keys=True))
+    else:
+        print(render_text(summary))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

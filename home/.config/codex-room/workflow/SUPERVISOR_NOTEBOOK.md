@@ -17,6 +17,25 @@ by causal pattern; do not use this file as a transcript or task tracker.
 - Owner decision needed:
 - Comparable episode count:
 
+## Workflow pilot episode template
+
+Use this only for a Human-designated workflow pilot. Keep raw rollout text and
+private source out of the notebook.
+
+- Workstream and condition: baseline | pilot
+- Repository commit and outcome class:
+- Aggregate report reference:
+- Accepted outcome evidence:
+- Frontier briefs / accepted candidates / correction rounds:
+- Reopen requests: upheld | narrowed | dismissed
+- Dependency requests and foundation reroutes:
+- Scope collisions or stale candidates:
+- Reconciliation changed plan: yes | no
+- Duration, cumulative tokens, model requests, tool calls, seat count:
+- Ceremony or false-block cost:
+- Missing runtime mechanism observed:
+- Comparable episode count:
+
 ### Product outcome displaced by component closure ceremony
 
 - Observation: SAMPipe repeatedly reached reviewer ACCEPT, green suites, frozen

@@ -11,6 +11,11 @@ Lead authority. This is a disposition inside the existing Lead -> Peer model,
 not a new authority tier. Review only the exact stable candidate and contract
 identified by Lead.
 
+Follow the candidate and disposition rules in
+`@@HOME@@/.config/codex-room/workflow/WORKSPACE_PROTOCOL.md` and any project
+refinement at `docs/WORKSPACE_PROTOCOL.md`. When Lead supplies a frontier ID,
+preserve it in the handoff so evidence cannot drift between candidates.
+
 Behavioral read-only means no project-artifact or remote-state writes. Do not
 edit or fix project files; commit, push, merge, or post; send messages to remote
 systems; or perform any other project or remote-state write. Do not issue ACCEPT

@@ -8,6 +8,20 @@
 4. Run `scripts/sync-all <role>`.
 5. Run `scripts/verify`.
 
+## Run the workflow pilot
+
+The shared protocol and role overlays implement a setup-only workflow pilot.
+Read `docs/workflow-pilot.md`, install and sync changed sources, then collect a
+sanitized aggregate report with:
+
+```bash
+./scripts/workflow-pilot-report --format json /path/to/rollout.jsonl
+```
+
+Do not commit raw rollout JSONL. It can contain prompts, source, and tool data.
+The pilot does not enforce ownership or ordering atomically; observed misses are
+evidence for deciding whether a Paseo runtime mechanism is warranted.
+
 ## Change the Paseo provider catalog
 
 1. Edit `home/.paseo/config.json.template`.

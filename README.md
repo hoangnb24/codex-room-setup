@@ -87,7 +87,17 @@ All role overlays currently request `danger-full-access` with `approval_policy =
 
 # Export sanitized runtime summaries for local comparison
 ./scripts/export-runtime-snapshots
+
+# Summarize one Codex rollout session for benchmarking
+./scripts/session-usage --role peer --session-id SESSION_ID
+
+# Count workflow-pilot markers without exporting rollout content
+./scripts/workflow-pilot-report --format json /path/to/rollout.jsonl
 ```
 
-Official Codex configuration precedence is documented by OpenAI in the [Codex config basics](https://learn.chatgpt.com/docs/config-file/config-basic.md). `codex-room` uses a separate `CODEX_HOME` per role; this is a local orchestration layer, not a replacement for the operator's Codex installation.
+See [docs/session-usage-benchmark.md](docs/session-usage-benchmark.md) for token,
+request, tool-call, timing, and API-equivalent cost definitions.
+See [docs/workflow-pilot.md](docs/workflow-pilot.md) for the setup-only workflow
+experiment and the evidence threshold for adding Paseo enforcement.
 
+Official Codex configuration precedence is documented by OpenAI in the [Codex config basics](https://learn.chatgpt.com/docs/config-file/config-basic.md). `codex-room` uses a separate `CODEX_HOME` per role; this is a local orchestration layer, not a replacement for the operator's Codex installation.
