@@ -9,6 +9,8 @@ fork_url="${PASEO_FORK_URL:-git@github.com:hoangnb24/paseo.git}"
 upstream_url="${PASEO_UPSTREAM_URL:-git@github.com:getpaseo/paseo.git}"
 target="${PASEO_REPO_DIR:-$HOME/projects/supervisors/paseo}"
 branch="${PASEO_BRANCH:-main}"
+cli_entrypoint="${PASEO_CLI_ENTRYPOINT:-packages/cli/bin/paseo}"
+cli_link="${PASEO_CLI_LINK:-$HOME/.local/bin/paseo}"
 
 if [[ -e "$target" && ! -d "$target/.git" ]]; then
   die "target exists but is not a Git checkout: $target"
@@ -36,8 +38,26 @@ elif [[ "$current_upstream" != "$upstream_url" ]]; then
   warn "origin remote differs: $current_upstream"
 fi
 
+cli_target="$target/$cli_entrypoint"
+[[ -f "$cli_target" ]] || die "Paseo CLI entrypoint is missing: $cli_target"
+
+if [[ -L "$cli_link" && "$(readlink "$cli_link")" == "$cli_target" ]]; then
+  log "UNCHANGED  $cli_link -> $cli_target"
+else
+  if [[ -e "$cli_link" || -L "$cli_link" ]]; then
+    timestamp=$(date -u +%Y%m%dT%H%M%SZ)
+    backup="$HOME/.codex-room-backups/paseo-cli-${timestamp}"
+    mkdir -p "$backup"
+    cp -Pp "$cli_link" "$backup/paseo"
+    log "BACKUP  $cli_link -> $backup/paseo"
+    rm -f "$cli_link"
+  fi
+  mkdir -p "$(dirname "$cli_link")"
+  ln -s "$cli_target" "$cli_link"
+  log "LINK  $cli_link -> $cli_target"
+fi
+
 log "PASEO_FORK_READY"
 log "path=$target"
 log "branch=$(git -C "$target" branch --show-current)"
 log "commit=$(git -C "$target" rev-parse HEAD)"
-

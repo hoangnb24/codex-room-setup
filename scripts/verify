@@ -78,6 +78,9 @@ check "review defaults to Luna Max" jq -e '
 ' "$config_template"
 
 if [[ "$mode" == installed ]]; then
+  expected_paseo_cli="$HOME/projects/supervisors/paseo/packages/cli/bin/paseo"
+  check "Paseo CLI links to local fork" test \
+    "$(readlink "$HOME/.local/bin/paseo" 2>/dev/null || true)" = "$expected_paseo_cli"
   for role in supervisor lead peer review; do
     runtime="$HOME/.codex-runtime/$role"
     check "$role runtime config" test -f "$runtime/config.toml"

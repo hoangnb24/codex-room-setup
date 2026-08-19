@@ -8,11 +8,13 @@
 ~/.config/codex-room/workflow/*.md
 ~/.local/bin/codex-room
 ~/.local/bin/codex-room-sync
+~/.local/bin/paseo -> ~/projects/supervisors/paseo/packages/cli/bin/paseo
 ~/.local/bin/paseo-local-update
 ~/.paseo/config.json
 ```
 
 The repository stores HOME-dependent JSON as `*.template`; installation renders it to the path without `.template`.
+The Paseo CLI symlink is created by `scripts/install-paseo-fork`, after the checkout is available.
 
 ## Generated files
 
@@ -33,4 +35,3 @@ Never commit:
 - Paseo daemon keypairs, push tokens, IDs, agent state, worktrees, uploads, logs or PID files.
 - Runtime sessions, logs, memories, queues or SQLite databases.
 - Backup directories.
-

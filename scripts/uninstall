@@ -26,6 +26,20 @@ remove_if_managed() {
   log "REMOVED  $target_path"
 }
 
+remove_managed_paseo_link() {
+  local target_path="$HOME/.local/bin/paseo"
+  local expected="$HOME/projects/supervisors/paseo/packages/cli/bin/paseo"
+  [[ -L "$target_path" ]] || return
+  if [[ "$(readlink "$target_path")" != "$expected" ]]; then
+    warn "preserving unmanaged symlink: $target_path"
+    return
+  fi
+  mkdir -p "$backup_root/.local/bin"
+  cp -Pp "$target_path" "$backup_root/.local/bin/paseo"
+  rm -f "$target_path"
+  log "REMOVED  $target_path"
+}
+
 while IFS='|' read -r source target; do
   [[ -n "$source" ]] || continue
   remove_if_managed "$REPO_ROOT/home/$source" "$HOME/$target"
@@ -48,7 +62,8 @@ done <<'EOF'
 .paseo/config.json.template|.paseo/config.json
 EOF
 
+remove_managed_paseo_link
+
 log "UNINSTALL_COMPLETE"
 log "backup=$backup_root"
 log "Generated ~/.codex-runtime and Paseo state were preserved."
-

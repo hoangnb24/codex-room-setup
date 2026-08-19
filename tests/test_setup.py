@@ -100,6 +100,45 @@ class SetupShapeTests(unittest.TestCase):
             self.assertFalse((fake_home / ".codex").exists())
             self.assertFalse((fake_home / ".codex-runtime").exists())
 
+    def test_paseo_fork_installer_links_cli(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            fake_home = Path(temporary) / "home"
+            checkout = Path(temporary) / "paseo"
+            cli = checkout / "packages" / "cli" / "bin" / "paseo"
+            cli.parent.mkdir(parents=True)
+            cli.write_text("#!/usr/bin/env node\n")
+            subprocess.run(["git", "init", "-q", str(checkout)], check=True)
+            subprocess.run(["git", "-C", str(checkout), "add", "."], check=True)
+            subprocess.run(
+                [
+                    "git", "-C", str(checkout),
+                    "-c", "user.name=Test", "-c", "user.email=test@example.invalid",
+                    "commit", "-qm", "fixture",
+                ],
+                check=True,
+            )
+
+            env = os.environ.copy()
+            env.update(
+                {
+                    "HOME": str(fake_home),
+                    "PASEO_REPO_DIR": str(checkout),
+                    "PASEO_FORK_URL": "git@example.invalid:fork/paseo.git",
+                    "PASEO_UPSTREAM_URL": "git@example.invalid:upstream/paseo.git",
+                }
+            )
+            subprocess.run(
+                [str(ROOT / "scripts" / "install-paseo-fork")],
+                check=True,
+                env=env,
+                capture_output=True,
+                text=True,
+            )
+
+            link = fake_home / ".local" / "bin" / "paseo"
+            self.assertTrue(link.is_symlink())
+            self.assertEqual(os.readlink(link), str(cli))
+
     def test_session_usage_reports_requests_tools_tokens_and_cost(self) -> None:
         fixture = ROOT / "tests" / "fixtures" / "session-usage.jsonl"
         completed = subprocess.run(

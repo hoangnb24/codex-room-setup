@@ -22,6 +22,13 @@ The `home/` directory mirrors `$HOME`:
 | `home/.local/bin/codex-room*` | `~/.local/bin/` |
 | `home/.paseo/config.json.template` | `~/.paseo/config.json` |
 
+`scripts/install-paseo-fork` also creates this checkout-aware symlink:
+
+```text
+~/.local/bin/paseo
+  -> ~/projects/supervisors/paseo/packages/cli/bin/paseo
+```
+
 `@@HOME@@` placeholders are rendered during installation. Runtime databases, sessions, logs, auth files, keypairs, tokens, worktrees, and backups are never installed from or exported into Git.
 
 ## Install
@@ -39,7 +46,7 @@ cd codex-room-setup
 ./scripts/doctor
 ./scripts/install                 # dry-run only
 ./scripts/install --apply         # backup and install
-./scripts/install-paseo-fork      # clone/verify the Paseo fork
+./scripts/install-paseo-fork      # clone/verify the fork and link its CLI
 ./scripts/sync-all                # materialize four CODEX_HOME directories
 ./scripts/verify                  # verify installed files and runtimes
 ```
@@ -57,6 +64,8 @@ It never writes to `~/.codex`.
 After the fork exists at `~/projects/supervisors/paseo`:
 
 ```bash
+paseo daemon start
+paseo daemon status
 paseo-local-update
 ```
 
