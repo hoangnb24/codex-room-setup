@@ -41,8 +41,11 @@ Peer Engineer.
 
 ### Cross-module or lifecycle-sensitive
 
-Use a read-only Architect before one isolated Peer writer. Freeze the candidate,
-then use an independent read-only Reviewer.
+Use a read-only Architect only when foundation or design uncertainty can change
+the route. Use one isolated Peer writer for the moving scope. Use an independent
+read-only Reviewer only when the frozen candidate has material correctness,
+lifecycle, proof, privacy, security, or integration risk. Do not create an
+Architect or Reviewer only to complete a standard topology.
 
 ### Architecture lock-in or owner trade-off
 
@@ -180,6 +183,45 @@ correction order.
 
 Engineer proves the write, Reviewer attempts to falsify the exact candidate, Lead
 inspects the artifact and evidence, and Human accepts only owner-level trade-offs.
+
+### Review classes and close-out
+
+Before creating a Reviewer, Lead selects the smallest sufficient review class:
+
+- `NO_REVIEW`: tiny or low-risk work that Lead can inspect directly.
+- `FAST`: bounded correction close-out on one accepted finding set and its direct
+  regression surface. Prefer Sol Medium.
+- `DEEP`: one exploratory adversarial review of a consequential frozen candidate.
+  Prefer Luna Max.
+- `DUAL`: two concurrent reviews only when their lanes are distinct and
+  dependency-independent. Provider or reviewer count creates no authority.
+
+Lead also declares `review_mode: EXPLORATORY | CLOSEOUT`, one review lane, and
+the candidate identity. In `EXPLORATORY` mode, Reviewer inspects the complete
+assigned concern and returns one batch of material findings. Lead rules once on
+that batch and freezes the accepted finding set before correction.
+
+Every `CLOSEOUT` dispatch uses `review_class: FAST`, including when Lead reuses
+the original Reviewer seat. The class describes the bounded work, not the
+runtime that happens to execute it. Record `review_model_actual` separately so
+pilot measurement can distinguish scope from model choice.
+
+One writer then owns one correction batch. In `CLOSEOUT` mode, Reviewer checks
+only the accepted finding set, the correction delta, and direct regressions from
+that delta. Close-out does not restart broad exploratory review. A new finding
+may reopen the work only when it is a material direct regression or evidence of
+one shared foundation failure.
+
+A close-out Reviewer reports exactly `CLOSEOUT_CLEAR` or `CLOSEOUT_FINDINGS`.
+Do not create synonyms such as `CLOSEOUT_NO_FINDINGS`. These are evidence for
+Lead, not acceptance rulings.
+
+The normal review family ends after one exploratory review, one correction
+batch, and one close-out. If close-out would require a second correction in the
+same finding family, reconciliation is required before another dispatch. Freeze
+the candidate and correction history, identify the shared mechanism or failed
+premise, and let Lead decide redesign, bounded correction, no action, or owner
+escalation. Do not start a third review loop automatically.
 
 ## Reconciliation cadence
 

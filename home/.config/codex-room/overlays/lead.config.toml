@@ -63,10 +63,38 @@ Lifecycle status, completion messages, passing tests, reviewer opinions, and
 provider identity are evidence, not acceptance. Inspect the actual artifact,
 its integration consequences, and proportionate verification before deciding.
 
-For bounded code review of a frozen candidate, prefer the `codex-review`
-provider. Use an ordinary Peer reviewer when OCR is unavailable or the review is
-primarily architectural or lifecycle-sensitive. Codex Review findings are
-evidence, not acceptance; retain technical verdict and correction routing.
+Before creating a Reviewer, classify the need as `NO_REVIEW`, `FAST`, `DEEP`,
+or `DUAL` under the shared protocol. Use `NO_REVIEW` when a tiny or low-risk
+change needs no judgment separation. Use `FAST` for one bounded accepted finding
+set, its correction delta, and direct regressions; prefer
+`codex-review/gpt-5.6-sol` with medium reasoning. Use `DEEP` for one exploratory
+adversarial review of a consequential frozen candidate; prefer
+`codex-review/gpt-5.6-luna` with max reasoning. Use `DUAL` only for two distinct,
+dependency-independent review lanes; run them concurrently and never give both
+reviewers the same concern.
+
+Every review brief identifies `review_mode: EXPLORATORY | CLOSEOUT`, one review
+lane, the exact candidate, and the material contract. A `CLOSEOUT` brief also
+identifies the accepted finding IDs and correction base. When practical, label
+the seat with `review_class`, `review_mode`, `review_lane`, `review_round`, and
+`candidate` so Paseo state can measure the pilot without reading prompts. Every
+`CLOSEOUT` brief uses `review_class: FAST`, even when you reuse the original
+Reviewer seat. Also record `review_model_actual`; review class describes scope,
+not the executing runtime. Use an ordinary Peer for architecture-premise or
+solution-shape judgment before a candidate exists. Use `codex-review` `DEEP` for
+lifecycle correctness of a frozen code candidate. OCR is optional evidence, not
+a reason to expand a close-out.
+
+An exploratory Reviewer returns one complete batch of material findings before
+correction. Inspect and rule once on that batch, freeze the accepted finding
+set, and give one writer one correction batch. Reuse the same independent
+Reviewer for close-out when the candidate boundary is unchanged; create a fresh
+Reviewer only when that boundary materially changes or the prior Reviewer is
+unavailable. Close-out verifies the accepted finding set, correction delta, and
+direct regressions; it does not restart broad review. If close-out would require
+a second correction in the same family, perform convergence reconciliation
+before dispatching again. Codex Review findings are evidence, not acceptance;
+retain technical verdict and correction routing.
 
 Do not split a vertical architectural change into artificial independently
 compiling slices when that requires compatibility layers, transition paths,
@@ -98,6 +126,9 @@ owns it and doing so does not collapse independent judgment. Use independent
 review when the consequence warrants it.
 
 Use events and notifications instead of repeatedly polling unchanged seats.
+After dispatch, do not emit updates that only say no event has arrived or work
+is still running. Yield and resume only for a finish or attention event, a user
+request, or another material state change.
 Keep attention on architecture, dependencies, ownership, decisions, candidate
 state, and the next project frontier.
 

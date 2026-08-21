@@ -97,6 +97,17 @@ class SetupShapeTests(unittest.TestCase):
             protocol = fake_home / ".config" / "codex-room" / "workflow" / "WORKSPACE_PROTOCOL.md"
             self.assertTrue(protocol.is_file())
             self.assertIn("FRONTIER_BRIEF v1", protocol.read_text())
+            notebook = fake_home / ".config" / "codex-room" / "workflow" / "SUPERVISOR_NOTEBOOK.md"
+            notebook.write_text("# Runtime learning\n")
+            second_install = subprocess.run(
+                [str(ROOT / "scripts" / "install"), "--apply"],
+                check=True,
+                env=env,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(notebook.read_text(), "# Runtime learning\n")
+            self.assertIn("PRESERVED  ~/.config/codex-room/workflow/SUPERVISOR_NOTEBOOK.md", second_install.stdout)
             self.assertFalse((fake_home / ".codex").exists())
             self.assertFalse((fake_home / ".codex-runtime").exists())
 
@@ -208,6 +219,25 @@ class SetupShapeTests(unittest.TestCase):
         supervisor = (ROOM / "overlays" / "supervisor.config.toml").read_text()
         self.assertIn("FOUNDATION_CHECK v1", lead)
         self.assertIn("PLAN_RECONCILIATION v1", lead)
+        self.assertIn("NO_REVIEW", lead)
+        self.assertIn("FAST", lead)
+        self.assertIn("DEEP", lead)
+        self.assertIn("DUAL", lead)
+        self.assertIn("review_mode: EXPLORATORY | CLOSEOUT", lead)
+
+        review = (ROOM / "overlays" / "review.config.toml").read_text()
+        self.assertIn("review_mode: EXPLORATORY | CLOSEOUT", review)
+        self.assertIn("CLOSEOUT_CLEAR", review)
+        self.assertIn("CLOSEOUT_FINDINGS", review)
+        self.assertIn("Do not report `CLOSEOUT_NO_FINDINGS`", review)
+
+        lead = (ROOM / "overlays" / "lead.config.toml").read_text()
+        self.assertIn("Every\n`CLOSEOUT` brief uses `review_class: FAST`", lead)
+        self.assertIn("`review_model_actual`", lead)
+        self.assertIn("do not emit updates that only say no event has arrived", lead)
+
+        self.assertIn("Review classes and close-out", protocol)
+        self.assertIn("one correction batch", protocol)
         self.assertIn("PEER_DISPOSITION v1", peer)
         self.assertIn("workflow pilot", supervisor)
 

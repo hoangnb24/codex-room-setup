@@ -25,6 +25,35 @@ contracts:
 Tiny bounded work may stay concise. The formats exist to expose decisions and
 failure modes, not to make every task ceremonial.
 
+## Phase 1 review strategy
+
+Lead selects the smallest sufficient review class before creating a Reviewer:
+
+| Class | Use | Default model | Expected rounds |
+| --- | --- | --- | --- |
+| `NO_REVIEW` | Tiny or low-risk work Lead can inspect directly | none | 0 |
+| `FAST` | Bounded correction close-out | Sol Medium | 1 close-out |
+| `DEEP` | Consequential exploratory falsification | Luna Max | 1 exploratory review |
+| `DUAL` | Two distinct, independent review lanes | lane-specific | concurrent |
+
+An exploratory review returns one complete batch of material findings. Lead
+rules once and freezes the accepted finding set. One writer owns one correction
+batch. Close-out checks only that finding set, the correction delta, and direct
+regressions. If close-out would require a second correction in the same finding
+family, reconciliation is required before another dispatch. Do not start a
+third review loop automatically.
+
+For pilot observability, Lead labels review seats with `review_class`,
+`review_mode`, `review_lane`, `review_round`, `candidate`, and
+`review_model_actual` when practical. Every close-out uses `review_class: FAST`,
+even when it reuses the original DEEP Reviewer seat. Review class measures the
+work boundary; `review_model_actual` measures the runtime choice. These labels
+contain coordination metadata only; do not put prompts, source, or private
+evidence in labels.
+
+Close-out emits exactly one machine-countable state: `CLOSEOUT_CLEAR` or
+`CLOSEOUT_FINDINGS`. Do not normalize synonyms in the report after the fact.
+
 ## Install and activate
 
 After editing the tracked setup:
@@ -61,6 +90,22 @@ Judge three groups of evidence:
 | Outcome quality | Real acceptance evidence, integration behavior, workaround debt, stale candidates |
 | Efficiency | Duration, cumulative tokens, model requests, tool calls, seat count, correction rounds |
 | Coordination | Useful reopen requests, explicit rulings, avoided collisions, reordered or absorbed work |
+
+For review-strategy comparisons, also record:
+
+- exploratory and close-out seat count;
+- review class, lane, and model;
+- accepted findings per exploratory review;
+- correction batches per finding family;
+- duplicate reviewer mandates;
+- stale-candidate reviews;
+- review wait duration and total session usage;
+- close-out result and any reconciliation trigger.
+
+For the Milestone 5 pilot, the target is at most one exploratory review, one
+correction batch, and one close-out per finding family. Material defects must
+still be reported. A lower round count is not success if outcome evidence gets
+weaker or a material defect escapes.
 
 Do not score a marker's presence as success. A reopen is useful when inspected
 evidence changes or validates the route. A reconciliation is useful when it

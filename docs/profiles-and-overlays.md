@@ -8,5 +8,9 @@ The word “profile” appears at three different levels:
 
 Changing a Paseo provider model affects the model picker and Paseo default. Changing an overlay affects the Codex process default after the next sync. Keep both aligned deliberately.
 
-The sync allowlist is intentionally small. New top-level role-specific keys must be added to `OVERRIDE_KEYS` in `codex-room-sync` and covered by tests.
+The Review overlay keeps Luna Max as the safe default for exploratory deep
+review. Lead may explicitly create a `FAST` close-out seat with
+`codex-review/gpt-5.6-sol` and medium reasoning. This is a task-level model
+choice inside the same Review role, not a new organizational role or provider.
 
+The sync allowlist is intentionally small. New top-level role-specific keys must be added to `OVERRIDE_KEYS` in `codex-room-sync` and covered by tests.

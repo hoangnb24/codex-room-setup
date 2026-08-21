@@ -68,6 +68,20 @@ install_one() {
   log "INSTALLED  ~/$relative_target"
 }
 
+install_once() {
+  local relative_source="$1"
+  local relative_target="$2"
+  local mode="$3"
+  local target_path="$HOME/$relative_target"
+
+  if [[ -e "$target_path" || -L "$target_path" ]]; then
+    log "PRESERVED  ~/$relative_target"
+    return
+  fi
+
+  install_one "$relative_source" "$relative_target" "$mode"
+}
+
 while IFS='|' read -r source target mode; do
   [[ -n "$source" ]] || continue
   install_one "$source" "$target" "$mode"
@@ -79,7 +93,6 @@ done <<'EOF'
 .config/codex-room/overlays/review.config.toml|.config/codex-room/overlays/review.config.toml|600
 .config/codex-room/workflow/WORKSPACE_PROTOCOL.md|.config/codex-room/workflow/WORKSPACE_PROTOCOL.md|644
 .config/codex-room/workflow/ANTI_PATTERNS.md|.config/codex-room/workflow/ANTI_PATTERNS.md|644
-.config/codex-room/workflow/SUPERVISOR_NOTEBOOK.md|.config/codex-room/workflow/SUPERVISOR_NOTEBOOK.md|644
 .config/codex-room/paseo.phase2-coexist.candidate.json.template|.config/codex-room/paseo.phase2-coexist.candidate.json|600
 .config/codex-room/paseo.phase2-hard-cut.candidate.json.template|.config/codex-room/paseo.phase2-hard-cut.candidate.json|600
 .local/bin/codex-room|.local/bin/codex-room|755
@@ -89,6 +102,11 @@ done <<'EOF'
 .local/bin/paseo-local-update|.local/bin/paseo-local-update|755
 .paseo/config.json.template|.paseo/config.json|600
 EOF
+
+install_once \
+  ".config/codex-room/workflow/SUPERVISOR_NOTEBOOK.md" \
+  ".config/codex-room/workflow/SUPERVISOR_NOTEBOOK.md" \
+  644
 
 if [[ "$apply" != true ]]; then
   log ""
