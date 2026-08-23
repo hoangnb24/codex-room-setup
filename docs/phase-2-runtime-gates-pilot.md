@@ -180,9 +180,9 @@ failed gate decisions. Historical data can be partial or unavailable.
 
 ## Disable and rollback
 
-Disable the experiment by exiting the foreground candidate. This does not stop
-or restart the shared daemon. To test the isolated candidate with gates
-disabled, start a new process:
+Stop the foreground candidate first. This does not stop or restart the shared
+daemon. To test the isolated candidate with gates disabled, start a new
+process:
 
 ```bash
 paseo-phase2-candidate off
@@ -200,3 +200,21 @@ mv "$HOME/.local/bin/paseo-phase2-candidate" "$phase2_backup/"
 Preserve `~/.paseo-phase2-runtime-gates` for evidence. Remove it only after its
 agent records and logs are no longer needed. No rollback step changes
 `~/.paseo`, port `6767`, or `/Applications/Paseo.app`.
+
+To roll back this setup candidate on
+`experiment/phase-2-runtime-gates`, run:
+
+```bash
+git revert --no-edit \
+  655d27ab353c51105ff8a5dadd333259826fa1bc^..experiment/phase-2-runtime-gates
+```
+
+To roll back the Paseo experiment on its
+`experiment/phase-2-runtime-gates` branch, run from the Paseo checkout:
+
+```bash
+git revert --no-edit \
+  1e84c503c4ed6f6aaaacaf2523210cc8b2beb410..experiment/phase-2-runtime-gates
+```
+
+Do not stage, edit, or remove `.codex/config.toml` during either rollback.
