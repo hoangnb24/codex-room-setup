@@ -252,11 +252,11 @@ summary=$(jq -s \
 ' "$session_file")
 
 if [[ "$format" == "json" ]]; then
-  jq . <<<"$summary"
+  printf '%s\n' "$summary" | jq .
   exit 0
 fi
 
-jq -r '
+printf '%s\n' "$summary" | jq -r '
   def number: tostring;
   def dollars:
     if . == null then "not calculated"
@@ -281,4 +281,4 @@ jq -r '
    else "Tools by name:        none"
    end),
   (.warnings[]? | "WARNING: \(.)")
-' <<<"$summary"
+'

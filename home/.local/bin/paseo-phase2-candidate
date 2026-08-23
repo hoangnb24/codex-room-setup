@@ -61,8 +61,8 @@ fi
 
 candidate_home_real=$(python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$candidate_home")
 shared_home_real=$(python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "@@HOME@@/.paseo")
-if [[ "$candidate_home_real" == "$shared_home_real" ]]; then
-  printf 'ERROR: candidate home must not be the shared Paseo home: %s\n' "$candidate_home" >&2
+if [[ "$candidate_home_real" == "$shared_home_real" || "$candidate_home_real" == "$shared_home_real/"* ]]; then
+  printf 'ERROR: candidate home must not be the shared Paseo home or a descendant: %s\n' "$candidate_home" >&2
   exit 1
 fi
 

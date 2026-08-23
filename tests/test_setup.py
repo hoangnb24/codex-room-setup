@@ -17,7 +17,6 @@ PASEO_TEMPLATE = HOME_MIRROR / ".paseo" / "config.json.template"
 SYNC = HOME_MIRROR / ".local" / "bin" / "codex-room-sync"
 SESSION_USAGE = ROOT / "scripts" / "session-usage"
 WORKFLOW_PILOT_REPORT = ROOT / "scripts" / "workflow-pilot-report"
-SYSTEM_BASH = "/bin/bash"
 
 
 class SetupShapeTests(unittest.TestCase):
@@ -85,7 +84,7 @@ class SetupShapeTests(unittest.TestCase):
             env = os.environ.copy()
             env["HOME"] = str(fake_home)
             subprocess.run(
-                [SYSTEM_BASH, str(ROOT / "scripts" / "install"), "--apply"],
+                [str(ROOT / "scripts" / "install"), "--apply"],
                 check=True,
                 env=env,
                 capture_output=True,
@@ -101,7 +100,7 @@ class SetupShapeTests(unittest.TestCase):
             notebook = fake_home / ".config" / "codex-room" / "workflow" / "SUPERVISOR_NOTEBOOK.md"
             notebook.write_text("# Runtime learning\n")
             second_install = subprocess.run(
-                [SYSTEM_BASH, str(ROOT / "scripts" / "install"), "--apply"],
+                [str(ROOT / "scripts" / "install"), "--apply"],
                 check=True,
                 env=env,
                 capture_output=True,
@@ -123,7 +122,7 @@ class SetupShapeTests(unittest.TestCase):
             env.update({"HOME": str(fake_home), "PASEO_PHASE2_REPO_DIR": str(checkout)})
 
             subprocess.run(
-                [SYSTEM_BASH, str(ROOT / "scripts" / "install"), "--apply"],
+                [str(ROOT / "scripts" / "install"), "--apply"],
                 check=True,
                 env=env,
                 capture_output=True,
@@ -153,7 +152,7 @@ class SetupShapeTests(unittest.TestCase):
             env = os.environ.copy()
             env.update({"HOME": str(fake_home), "PASEO_PHASE2_REPO_DIR": str(checkout)})
             subprocess.run(
-                [SYSTEM_BASH, str(ROOT / "scripts" / "install"), "--apply"],
+                [str(ROOT / "scripts" / "install"), "--apply"],
                 check=True,
                 env=env,
                 capture_output=True,
@@ -187,6 +186,15 @@ class SetupShapeTests(unittest.TestCase):
             )
             self.assertNotEqual(unsafe_home.returncode, 0)
             self.assertIn("must not be the shared Paseo home", unsafe_home.stderr)
+
+            nested_home = subprocess.run(
+                [str(launcher), "--dry-run", "enforce"],
+                env=env | {"PASEO_PHASE2_HOME": str(fake_home / ".paseo" / "phase2")},
+                capture_output=True,
+                text=True,
+            )
+            self.assertNotEqual(nested_home.returncode, 0)
+            self.assertIn("or a descendant", nested_home.stderr)
 
     def test_paseo_fork_installer_links_cli(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -231,7 +239,6 @@ class SetupShapeTests(unittest.TestCase):
         fixture = ROOT / "tests" / "fixtures" / "session-usage.jsonl"
         completed = subprocess.run(
             [
-                SYSTEM_BASH,
                 str(SESSION_USAGE),
                 "--format",
                 "json",
