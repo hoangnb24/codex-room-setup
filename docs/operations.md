@@ -22,6 +22,12 @@ Do not commit raw rollout JSONL. It can contain prompts, source, and tool data.
 The pilot does not enforce ownership or ordering atomically; observed misses are
 evidence for deciding whether a Paseo runtime mechanism is warranted.
 
+## Run the Phase 2 runtime-gates pilot
+
+Use [`phase-2-runtime-gates-pilot.md`](phase-2-runtime-gates-pilot.md). The
+tracked launcher runs a foreground candidate with a separate home and port. It
+does not change the main Paseo config, app, or daemon.
+
 ## Change the Paseo provider catalog
 
 1. Edit `home/.paseo/config.json.template`.

@@ -59,6 +59,7 @@ done <<'EOF'
 .local/bin/codex-room-hard-cut|.local/bin/codex-room-hard-cut
 .local/bin/codex-review-apply|.local/bin/codex-review-apply
 .local/bin/paseo-local-update|.local/bin/paseo-local-update
+.local/bin/paseo-phase2-candidate|.local/bin/paseo-phase2-candidate
 .paseo/config.json.template|.paseo/config.json
 EOF
 

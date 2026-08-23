@@ -3,6 +3,9 @@
 This pilot tests whether explicit planning, reopening, foundation, reconciliation,
 and ownership rules improve real work before Paseo stores or enforces them.
 
+The separate [Phase 2 runtime-gates pilot](phase-2-runtime-gates-pilot.md) tests
+Paseo observation and enforcement. Phase 1.1 remains the default workflow.
+
 The shared baseline is
 `home/.config/codex-room/workflow/WORKSPACE_PROTOCOL.md`. A project may refine it
 in `docs/WORKSPACE_PROTOCOL.md`. The project file should contain only local

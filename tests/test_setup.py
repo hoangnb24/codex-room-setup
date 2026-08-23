@@ -111,6 +111,82 @@ class SetupShapeTests(unittest.TestCase):
             self.assertFalse((fake_home / ".codex").exists())
             self.assertFalse((fake_home / ".codex-runtime").exists())
 
+    def test_installed_phase2_launcher_uses_isolated_candidate_controls(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            fake_home = Path(temporary) / "home"
+            checkout = Path(temporary) / "paseo"
+            fake_home.mkdir()
+            (checkout / ".git").mkdir(parents=True)
+            (checkout / "package.json").write_text("{}\n")
+            env = os.environ.copy()
+            env.update({"HOME": str(fake_home), "PASEO_PHASE2_REPO_DIR": str(checkout)})
+
+            subprocess.run(
+                [str(ROOT / "scripts" / "install"), "--apply"],
+                check=True,
+                env=env,
+                capture_output=True,
+                text=True,
+            )
+            launcher = fake_home / ".local" / "bin" / "paseo-phase2-candidate"
+            self.assertTrue(os.access(launcher, os.X_OK))
+            completed = subprocess.run(
+                [str(launcher), "--dry-run", "observe"],
+                check=True,
+                env=env,
+                capture_output=True,
+                text=True,
+            )
+            self.assertIn("mode=observe", completed.stdout)
+            self.assertIn("listen=127.0.0.1:6779", completed.stdout)
+            self.assertIn(str(fake_home / ".paseo-phase2-runtime-gates"), completed.stdout)
+            self.assertIn("PASEO_PHASE_2_RUNTIME_GATES=observe", completed.stdout)
+
+    def test_phase2_launcher_rejects_invalid_mode_and_shared_runtime(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            fake_home = Path(temporary) / "home"
+            checkout = Path(temporary) / "paseo"
+            fake_home.mkdir()
+            (checkout / ".git").mkdir(parents=True)
+            (checkout / "package.json").write_text("{}\n")
+            env = os.environ.copy()
+            env.update({"HOME": str(fake_home), "PASEO_PHASE2_REPO_DIR": str(checkout)})
+            subprocess.run(
+                [str(ROOT / "scripts" / "install"), "--apply"],
+                check=True,
+                env=env,
+                capture_output=True,
+                text=True,
+            )
+            launcher = fake_home / ".local" / "bin" / "paseo-phase2-candidate"
+
+            invalid = subprocess.run(
+                [str(launcher), "--dry-run", "enabled"],
+                env=env,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(invalid.returncode, 2)
+            self.assertIn("mode must be off, observe, or enforce", invalid.stderr)
+
+            unsafe_port = subprocess.run(
+                [str(launcher), "--dry-run", "enforce"],
+                env=env | {"PASEO_PHASE2_LISTEN": "127.0.0.1:6767"},
+                capture_output=True,
+                text=True,
+            )
+            self.assertNotEqual(unsafe_port.returncode, 0)
+            self.assertIn("must not be 6767", unsafe_port.stderr)
+
+            unsafe_home = subprocess.run(
+                [str(launcher), "--dry-run", "enforce"],
+                env=env | {"PASEO_PHASE2_HOME": str(fake_home / ".paseo")},
+                capture_output=True,
+                text=True,
+            )
+            self.assertNotEqual(unsafe_home.returncode, 0)
+            self.assertIn("must not be the shared Paseo home", unsafe_home.stderr)
+
     def test_paseo_fork_installer_links_cli(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             fake_home = Path(temporary) / "home"
