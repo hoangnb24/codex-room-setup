@@ -10,9 +10,10 @@
 
 ## Run the workflow pilot
 
-The shared protocol and role overlays implement a setup-only workflow pilot.
-Read `docs/workflow-pilot.md`, install and sync changed sources, then collect a
-sanitized aggregate report with:
+Role overlays implement the setup-only workflow pilot. A workspace can add
+local rules in `docs/WORKSPACE_PROTOCOL.md`. Read `docs/workflow-pilot.md`,
+install and sync changed sources, then collect a sanitized aggregate report
+with:
 
 ```bash
 ./scripts/workflow-pilot-report --format json /path/to/rollout.jsonl

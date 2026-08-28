@@ -6,10 +6,10 @@ and ownership rules improve real work before Paseo stores or enforces them.
 The separate [Phase 2 runtime-gates pilot](phase-2-runtime-gates-pilot.md) tests
 Paseo observation and enforcement. Phase 1.1 remains the default workflow.
 
-The shared baseline is
-`home/.config/codex-room/workflow/WORKSPACE_PROTOCOL.md`. A project may refine it
-in `docs/WORKSPACE_PROTOCOL.md`. The project file should contain only local
-constraints and tactics; it is not a copied task tracker.
+The role overlays contain the default pilot behavior. A workspace may define
+local constraints and tactics in `docs/WORKSPACE_PROTOCOL.md`. The retained
+`home/.config/codex-room/workflow/WORKSPACE_PROTOCOL.md` is a reference artifact;
+profiles and generated role runtimes do not load it.
 
 ## What the pilot changes
 
@@ -68,9 +68,9 @@ make test
 ./scripts/verify
 ```
 
-The workflow protocol is symlinked into each role runtime. Role overlays also
-point to the installed shared protocol and the optional project refinement.
-Installing or syncing does not restart Paseo.
+The workflow protocol is not symlinked into role runtimes. Role overlays read
+only the optional workspace-local `docs/WORKSPACE_PROTOCOL.md`. Installing or
+syncing does not restart Paseo.
 
 ## Run a useful comparison
 
