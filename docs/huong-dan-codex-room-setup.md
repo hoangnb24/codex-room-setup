@@ -234,7 +234,11 @@ Ba file trong thư mục này có mục đích khác nhau:
 
 #### `WORKSPACE_PROTOCOL.md`
 
-Đây là “hiến pháp ngắn” của room. Nó định nghĩa:
+Đây là tài liệu tham chiếu được giữ lại. Các profile và role runtime không tải
+file này. Mỗi workspace có thể đặt protocol riêng tại
+`docs/WORKSPACE_PROTOCOL.md`.
+
+Tài liệu tham chiếu định nghĩa:
 
 - Human quyết định mục tiêu sản phẩm, chi phí, tác động bên ngoài và trade-off rủi ro;
 - Supervisor quản trị portfolio và workflow;

@@ -23,7 +23,7 @@
 | Layer | Owner | Mutable state |
 | --- | --- | --- |
 | `~/.codex` | Operator/Codex | Auth, global config, skills, plugins, sessions |
-| `~/.config/codex-room` | This repository | Role overlays and shared workflow instructions |
+| `~/.config/codex-room` | This repository | Role overlays and retained workflow references |
 | `~/.codex-runtime` | `codex-room-sync` | Generated configs plus role-local sessions and databases |
 | `~/.paseo` | Paseo | Provider config, agents, projects, worktrees, logs and identity |
 | Paseo fork checkout | Git | Source code for CLI, daemon and Desktop |
@@ -37,8 +37,10 @@ For a role, the sync script:
 3. Adds role-specific `developer_instructions`.
 4. Generates a model catalog with native multi-agent metadata removed.
 5. Forces `[agents].enabled = false` and all native multi-agent feature flags off.
-6. Symlinks shared Codex resources and room workflow files.
+6. Symlinks shared Codex resources and the anti-pattern catalog.
 7. Removes inherited MCP server tables for Review.
 
-CLI flags and trusted project `.codex/config.toml` files can still override generated user-level values according to normal Codex precedence.
+The retained `WORKSPACE_PROTOCOL.md` is not linked into role runtimes. Each
+workspace can provide its own `docs/WORKSPACE_PROTOCOL.md`.
 
+CLI flags and trusted project `.codex/config.toml` files can still override generated user-level values according to normal Codex precedence.

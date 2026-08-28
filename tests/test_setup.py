@@ -309,13 +309,24 @@ class RuntimeGenerationTests(unittest.TestCase):
             self.assertIn("multi_agent = false", config)
             self.assertIn("multi_agent_v2 = false", config)
             self.assertTrue((runtime / "skills").is_symlink())
-            self.assertTrue((runtime / "WORKSPACE_PROTOCOL.md").is_symlink())
+            self.assertFalse((runtime / "WORKSPACE_PROTOCOL.md").exists())
             catalog = json.loads((runtime / "model-catalog.no-native-agents.json").read_text())
             self.assertTrue(all(model["multi_agent_version"] is None for model in catalog["models"]))
 
     def test_review_strips_mcp_servers(self) -> None:
         runtime = self.run_sync("review")
         self.assertNotIn("[mcp_servers.", (runtime / "config.toml").read_text())
+
+    def test_sync_removes_legacy_workspace_protocol_link(self) -> None:
+        runtime = self.root / ".runtime" / "lead"
+        runtime.mkdir(parents=True)
+        (runtime / "WORKSPACE_PROTOCOL.md").symlink_to(
+            self.workflow / "WORKSPACE_PROTOCOL.md"
+        )
+
+        self.run_sync("lead")
+
+        self.assertFalse((runtime / "WORKSPACE_PROTOCOL.md").exists())
 
     def test_supervisor_keeps_mcp_servers_and_initializes_notebook(self) -> None:
         runtime = self.run_sync("supervisor")

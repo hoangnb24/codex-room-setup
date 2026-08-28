@@ -28,9 +28,9 @@ OVERRIDE_KEYS = {
 SHARED_CODEX_RESOURCES = ("auth.json", "AGENTS.md", "hooks.json", "skills", "plugins")
 SHARED_ROOM_RESOURCES = ("model-instructions.md",)
 SHARED_WORKFLOW_RESOURCES = (
-    "WORKSPACE_PROTOCOL.md",
     "ANTI_PATTERNS.md",
 )
+LEGACY_RUNTIME_LINKS = ("WORKSPACE_PROTOCOL.md",)
 
 
 def resolved_path(env_name: str, default: pathlib.Path) -> pathlib.Path:
@@ -149,6 +149,14 @@ def safe_link(runtime: pathlib.Path, name: str, target: pathlib.Path) -> None:
     path.symlink_to(target)
 
 
+def remove_legacy_link(runtime: pathlib.Path, name: str) -> None:
+    path = runtime / name
+    if path.is_symlink():
+        path.unlink()
+    elif path.exists():
+        raise SystemExit(f"refusing to remove non-symlink runtime path: {path}")
+
+
 def source_catalog() -> dict:
     fixture = os.environ.get("CODEX_ROOM_MODEL_CATALOG")
     if fixture:
@@ -226,6 +234,8 @@ def main() -> None:
         safe_link(runtime, name, paths["room_shared"] / name)
     for name in SHARED_WORKFLOW_RESOURCES:
         safe_link(runtime, name, paths["workflow"] / name)
+    for name in LEGACY_RUNTIME_LINKS:
+        remove_legacy_link(runtime, name)
     if role == "supervisor":
         notebook = runtime / "SUPERVISOR_NOTEBOOK.md"
         notebook_template = paths["workflow"] / "SUPERVISOR_NOTEBOOK.md"
