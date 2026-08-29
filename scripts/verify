@@ -37,11 +37,13 @@ if [[ "$mode" == source ]]; then
   overlays_root="$REPO_ROOT/home/.config/codex-room/overlays"
   workflow_root="$REPO_ROOT/home/.config/codex-room/workflow"
   sync_path="$REPO_ROOT/home/.local/bin/codex-room-sync"
+  phase2_launcher="$REPO_ROOT/home/.local/bin/paseo-phase2-candidate"
 else
   config_template="$HOME/.paseo/config.json"
   overlays_root="$HOME/.config/codex-room/overlays"
   workflow_root="$HOME/.config/codex-room/workflow"
   sync_path="$HOME/.local/bin/codex-room-sync"
+  phase2_launcher="$HOME/.local/bin/paseo-phase2-candidate"
 fi
 
 check "Paseo config exists" test -f "$config_template"
@@ -49,6 +51,9 @@ check "Paseo config is valid JSON" jq -e . "$config_template"
 check "room sync exists" test -f "$sync_path"
 check "workspace protocol exists" test -f "$workflow_root/WORKSPACE_PROTOCOL.md"
 check "workflow pilot reporter is executable" test -x "$REPO_ROOT/scripts/workflow-pilot-report"
+check "Phase 2 candidate launcher is executable" test -x "$phase2_launcher"
+check "Phase 2 candidate launcher accepts its control modes" grep -Fq \
+  'off|observe|enforce' "$phase2_launcher"
 
 for role in supervisor lead peer review; do
   check "$role overlay exists" test -f "$overlays_root/$role.config.toml"

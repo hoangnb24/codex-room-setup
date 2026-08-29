@@ -10,9 +10,10 @@
 
 ## Run the workflow pilot
 
-The shared protocol and role overlays implement a setup-only workflow pilot.
-Read `docs/workflow-pilot.md`, install and sync changed sources, then collect a
-sanitized aggregate report with:
+Role overlays implement the setup-only workflow pilot. A workspace can add
+local rules in `docs/WORKSPACE_PROTOCOL.md`. Read `docs/workflow-pilot.md`,
+install and sync changed sources, then collect a sanitized aggregate report
+with:
 
 ```bash
 ./scripts/workflow-pilot-report --format json /path/to/rollout.jsonl
@@ -21,6 +22,12 @@ sanitized aggregate report with:
 Do not commit raw rollout JSONL. It can contain prompts, source, and tool data.
 The pilot does not enforce ownership or ordering atomically; observed misses are
 evidence for deciding whether a Paseo runtime mechanism is warranted.
+
+## Run the Phase 2 runtime-gates pilot
+
+Use [`phase-2-runtime-gates-pilot.md`](phase-2-runtime-gates-pilot.md). The
+tracked launcher runs a foreground candidate with a separate home and port. It
+does not change the main Paseo config, app, or daemon.
 
 ## Change the Paseo provider catalog
 

@@ -1,0 +1,90 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+  cat <<'EOF'
+Usage: paseo-phase2-candidate [--dry-run] off|observe|enforce
+
+Start the Paseo Phase 2 candidate in the foreground. It uses a separate home
+and port. --dry-run validates the setup and prints the command.
+
+Optional environment:
+  PASEO_PHASE2_REPO_DIR  Paseo checkout
+  PASEO_PHASE2_HOME      Candidate state directory
+  PASEO_PHASE2_LISTEN    Candidate listen address
+EOF
+}
+
+dry_run=false
+if [[ "${1:-}" == "--dry-run" ]]; then
+  dry_run=true
+  shift
+fi
+
+if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
+  usage
+  exit 0
+fi
+
+if [[ $# -ne 1 ]]; then
+  usage >&2
+  exit 2
+fi
+
+mode="$1"
+case "$mode" in
+  off|observe|enforce) ;;
+  *)
+    printf 'ERROR: mode must be off, observe, or enforce: %s\n' "$mode" >&2
+    exit 2
+    ;;
+esac
+
+repo_dir="${PASEO_PHASE2_REPO_DIR:-@@HOME@@/projects/supervisors/paseo}"
+candidate_home="${PASEO_PHASE2_HOME:-@@HOME@@/.paseo-phase2-runtime-gates}"
+listen="${PASEO_PHASE2_LISTEN:-127.0.0.1:6779}"
+
+if [[ ! -d "$repo_dir/.git" || ! -f "$repo_dir/package.json" ]]; then
+  printf 'ERROR: Paseo checkout is not valid: %s\n' "$repo_dir" >&2
+  exit 1
+fi
+
+if [[ ! "$listen" =~ ^(127\.0\.0\.1|localhost):([0-9]+)$ ]]; then
+  printf 'ERROR: candidate listen address must use loopback and a numeric port: %s\n' "$listen" >&2
+  exit 1
+fi
+port="${BASH_REMATCH[2]}"
+if (( port < 1 || port > 65535 || port == 6767 )); then
+  printf 'ERROR: candidate port must be 1-65535 and must not be 6767: %s\n' "$port" >&2
+  exit 1
+fi
+
+candidate_home_real=$(python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$candidate_home")
+shared_home_real=$(python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "@@HOME@@/.paseo")
+if [[ "$candidate_home_real" == "$shared_home_real" || "$candidate_home_real" == "$shared_home_real/"* ]]; then
+  printf 'ERROR: candidate home must not be the shared Paseo home or a descendant: %s\n' "$candidate_home" >&2
+  exit 1
+fi
+
+printf 'mode=%s\n' "$mode"
+printf 'repo=%s\n' "$repo_dir"
+printf 'home=%s\n' "$candidate_home"
+printf 'listen=%s\n' "$listen"
+
+if [[ "$dry_run" == true ]]; then
+  printf 'DRY_RUN: PASEO_LISTEN=%q PASEO_HOME=%q PASEO_PHASE_2_RUNTIME_GATES=%q npm run dev:server:raw\n' \
+    "$listen" "$candidate_home" "$mode"
+  exit 0
+fi
+
+command -v npm >/dev/null 2>&1 || {
+  printf 'ERROR: required command is missing: npm\n' >&2
+  exit 1
+}
+
+cd "$repo_dir"
+exec env \
+  PASEO_LISTEN="$listen" \
+  PASEO_HOME="$candidate_home" \
+  PASEO_PHASE_2_RUNTIME_GATES="$mode" \
+  npm run dev:server:raw

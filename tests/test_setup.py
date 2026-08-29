@@ -39,6 +39,8 @@ class SetupShapeTests(unittest.TestCase):
             providers["codex-review"]["command"],
             ["/tmp/operator/.local/bin/codex-room", "review"],
         )
+        self.assertEqual(providers["codex-review"]["label"], "Codex Review (OCR-assisted)")
+        self.assertIn("frozen bounded candidates", providers["codex-review"]["description"])
 
     def test_role_defaults_are_aligned(self) -> None:
         config = json.loads(PASEO_TEMPLATE.read_text().replace("@@HOME@@", "/tmp/operator"))
@@ -64,6 +66,23 @@ class SetupShapeTests(unittest.TestCase):
             self.assertEqual(default["id"], model)
             thinking = next(item for item in default["thinkingOptions"] if item.get("isDefault"))
             self.assertEqual(thinking["id"], effort)
+
+    def test_review_provider_offers_deep_default_and_fast_choice(self) -> None:
+        config = json.loads(PASEO_TEMPLATE.read_text().replace("@@HOME@@", "/tmp/operator"))
+        models = config["agents"]["providers"]["codex-review"]["models"]
+        self.assertEqual([model["id"] for model in models], ["gpt-5.6-luna", "gpt-5.6-sol"])
+
+        luna, sol = models
+        self.assertTrue(luna["isDefault"])
+        self.assertEqual(
+            luna["thinkingOptions"],
+            [{"id": "max", "label": "Max", "isDefault": True}],
+        )
+        self.assertNotIn("isDefault", sol)
+        self.assertEqual(
+            sol["thinkingOptions"],
+            [{"id": "medium", "label": "Medium", "isDefault": True}],
+        )
 
     def test_no_private_state_or_machine_home_is_tracked(self) -> None:
         forbidden_names = {
@@ -110,6 +129,91 @@ class SetupShapeTests(unittest.TestCase):
             self.assertIn("PRESERVED  ~/.config/codex-room/workflow/SUPERVISOR_NOTEBOOK.md", second_install.stdout)
             self.assertFalse((fake_home / ".codex").exists())
             self.assertFalse((fake_home / ".codex-runtime").exists())
+
+    def test_installed_phase2_launcher_uses_isolated_candidate_controls(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            fake_home = Path(temporary) / "home"
+            checkout = Path(temporary) / "paseo"
+            fake_home.mkdir()
+            (checkout / ".git").mkdir(parents=True)
+            (checkout / "package.json").write_text("{}\n")
+            env = os.environ.copy()
+            env.update({"HOME": str(fake_home), "PASEO_PHASE2_REPO_DIR": str(checkout)})
+
+            subprocess.run(
+                [str(ROOT / "scripts" / "install"), "--apply"],
+                check=True,
+                env=env,
+                capture_output=True,
+                text=True,
+            )
+            launcher = fake_home / ".local" / "bin" / "paseo-phase2-candidate"
+            self.assertTrue(os.access(launcher, os.X_OK))
+            completed = subprocess.run(
+                [str(launcher), "--dry-run", "observe"],
+                check=True,
+                env=env,
+                capture_output=True,
+                text=True,
+            )
+            self.assertIn("mode=observe", completed.stdout)
+            self.assertIn("listen=127.0.0.1:6779", completed.stdout)
+            self.assertIn(str(fake_home / ".paseo-phase2-runtime-gates"), completed.stdout)
+            self.assertIn("PASEO_PHASE_2_RUNTIME_GATES=observe", completed.stdout)
+
+    def test_phase2_launcher_rejects_invalid_mode_and_shared_runtime(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            fake_home = Path(temporary) / "home"
+            checkout = Path(temporary) / "paseo"
+            fake_home.mkdir()
+            (checkout / ".git").mkdir(parents=True)
+            (checkout / "package.json").write_text("{}\n")
+            env = os.environ.copy()
+            env.update({"HOME": str(fake_home), "PASEO_PHASE2_REPO_DIR": str(checkout)})
+            subprocess.run(
+                [str(ROOT / "scripts" / "install"), "--apply"],
+                check=True,
+                env=env,
+                capture_output=True,
+                text=True,
+            )
+            launcher = fake_home / ".local" / "bin" / "paseo-phase2-candidate"
+
+            invalid = subprocess.run(
+                [str(launcher), "--dry-run", "enabled"],
+                env=env,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(invalid.returncode, 2)
+            self.assertIn("mode must be off, observe, or enforce", invalid.stderr)
+
+            unsafe_port = subprocess.run(
+                [str(launcher), "--dry-run", "enforce"],
+                env=env | {"PASEO_PHASE2_LISTEN": "127.0.0.1:6767"},
+                capture_output=True,
+                text=True,
+            )
+            self.assertNotEqual(unsafe_port.returncode, 0)
+            self.assertIn("must not be 6767", unsafe_port.stderr)
+
+            unsafe_home = subprocess.run(
+                [str(launcher), "--dry-run", "enforce"],
+                env=env | {"PASEO_PHASE2_HOME": str(fake_home / ".paseo")},
+                capture_output=True,
+                text=True,
+            )
+            self.assertNotEqual(unsafe_home.returncode, 0)
+            self.assertIn("must not be the shared Paseo home", unsafe_home.stderr)
+
+            nested_home = subprocess.run(
+                [str(launcher), "--dry-run", "enforce"],
+                env=env | {"PASEO_PHASE2_HOME": str(fake_home / ".paseo" / "phase2")},
+                capture_output=True,
+                text=True,
+            )
+            self.assertNotEqual(nested_home.returncode, 0)
+            self.assertIn("or a descendant", nested_home.stderr)
 
     def test_paseo_fork_installer_links_cli(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -241,6 +345,71 @@ class SetupShapeTests(unittest.TestCase):
         self.assertIn("PEER_DISPOSITION v1", peer)
         self.assertIn("workflow pilot", supervisor)
 
+    def test_review_routing_and_ocr_boundaries(self) -> None:
+        config = json.loads(PASEO_TEMPLATE.read_text().replace("@@HOME@@", "/tmp/operator"))
+        providers = config["agents"]["providers"]
+        self.assertIn("codex-review", providers)
+        self.assertNotIn("codex-ocr", providers)
+        self.assertNotIn("codex-review", config["daemon"]["mcp"]["injectIntoProviders"])
+
+        lead = (ROOM / "overlays" / "lead.config.toml").read_text()
+        lead_words = " ".join(lead.split())
+        self.assertIn("Use `NO_REVIEW` for tiny or low-risk work", lead_words)
+        self.assertIn("Use a read-only ordinary Peer", lead_words)
+        self.assertIn("Lead never runs OCR", lead_words)
+        self.assertIn("Use `codex-review` only for an OCR-assisted review", lead_words)
+        self.assertIn("Review returns `DEPENDENCY_REQUEST` and stops if any command fails", lead_words)
+        self.assertIn("any result is empty or malformed", lead_words)
+        self.assertIn("a file or rule selection is invalid", lead_words)
+        self.assertIn(
+            "result cannot be independently reconciled with the candidate and contract",
+            lead_words,
+        )
+        self.assertIn("Do not substitute a manual or non-OCR", lead_words)
+        self.assertIn(
+            "one exploratory batch, one correction batch, and one bounded close-out",
+            lead_words,
+        )
+        self.assertIn("does not use OCR by default", lead_words)
+
+        peer = (ROOM / "overlays" / "peer.config.toml").read_text()
+        self.assertIn("system-level macro judgment", " ".join(peer.split()))
+        self.assertNotIn("ocr", peer.lower())
+        self.assertNotIn("open code review", peer.lower())
+
+        review = (ROOM / "overlays" / "review.config.toml").read_text()
+        command_check = review.index("`command -v ocr`")
+        preview = review.index("`ocr delegate preview`", command_check)
+        rule = review.index("`ocr delegate rule`", preview)
+        self.assertLess(command_check, preview)
+        self.assertLess(preview, rule)
+        review_words = " ".join(review.split())
+        self.assertIn("If any command fails, return `DEPENDENCY_REQUEST`", review_words)
+        self.assertIn("command result is empty or malformed", review_words)
+        self.assertIn("file or rule selection is invalid", review_words)
+        self.assertIn(
+            "result cannot be independently reconciled with the stable candidate and review contract",
+            review_words,
+        )
+        self.assertIn("Do not replace the required OCR evidence with a manual pass", review_words)
+        self.assertIn("selected files, selected rules, and findings", review_words)
+        self.assertIn("Do not ask Lead or the user to run them", review_words)
+        self.assertIn("Do not invoke OCR by default in `CLOSEOUT` mode", review_words)
+        self.assertIn("Behavioral read-only", review_words)
+        self.assertIn("Do not start a third loop automatically", review_words)
+
+    def test_lead_review_is_pull_based(self) -> None:
+        lead = (ROOM / "overlays" / "lead.config.toml").read_text()
+        expected = """
+            Review is pull-based. A new diff, commit, frontier, or completed Peer task is
+            not itself a review trigger. Dispatch independent review only when its result
+            can change the next technical decision and deterministic checks cannot answer
+            the concern more cheaply. Review a premise early when a wrong choice would lock
+            architecture or lifecycle. Before an irreversible or owner-gated action,
+            review only when material residual risk remains after owning checks. Otherwise,
+            batch related work at one stable integration or acceptance boundary.
+        """
+        self.assertIn(" ".join(expected.split()), " ".join(lead.split()))
 
 class RuntimeGenerationTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -309,13 +478,24 @@ class RuntimeGenerationTests(unittest.TestCase):
             self.assertIn("multi_agent = false", config)
             self.assertIn("multi_agent_v2 = false", config)
             self.assertTrue((runtime / "skills").is_symlink())
-            self.assertTrue((runtime / "WORKSPACE_PROTOCOL.md").is_symlink())
+            self.assertFalse((runtime / "WORKSPACE_PROTOCOL.md").exists())
             catalog = json.loads((runtime / "model-catalog.no-native-agents.json").read_text())
             self.assertTrue(all(model["multi_agent_version"] is None for model in catalog["models"]))
 
     def test_review_strips_mcp_servers(self) -> None:
         runtime = self.run_sync("review")
         self.assertNotIn("[mcp_servers.", (runtime / "config.toml").read_text())
+
+    def test_sync_removes_legacy_workspace_protocol_link(self) -> None:
+        runtime = self.root / ".runtime" / "lead"
+        runtime.mkdir(parents=True)
+        (runtime / "WORKSPACE_PROTOCOL.md").symlink_to(
+            self.workflow / "WORKSPACE_PROTOCOL.md"
+        )
+
+        self.run_sync("lead")
+
+        self.assertFalse((runtime / "WORKSPACE_PROTOCOL.md").exists())
 
     def test_supervisor_keeps_mcp_servers_and_initializes_notebook(self) -> None:
         runtime = self.run_sync("supervisor")

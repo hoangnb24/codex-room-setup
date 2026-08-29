@@ -85,23 +85,24 @@ install_once() {
 while IFS='|' read -r source target mode; do
   [[ -n "$source" ]] || continue
   install_one "$source" "$target" "$mode"
-done <<'EOF'
-.config/codex-room/model-instructions.md|.config/codex-room/model-instructions.md|644
-.config/codex-room/overlays/supervisor.config.toml|.config/codex-room/overlays/supervisor.config.toml|600
-.config/codex-room/overlays/lead.config.toml|.config/codex-room/overlays/lead.config.toml|600
-.config/codex-room/overlays/peer.config.toml|.config/codex-room/overlays/peer.config.toml|600
-.config/codex-room/overlays/review.config.toml|.config/codex-room/overlays/review.config.toml|600
-.config/codex-room/workflow/WORKSPACE_PROTOCOL.md|.config/codex-room/workflow/WORKSPACE_PROTOCOL.md|644
-.config/codex-room/workflow/ANTI_PATTERNS.md|.config/codex-room/workflow/ANTI_PATTERNS.md|644
-.config/codex-room/paseo.phase2-coexist.candidate.json.template|.config/codex-room/paseo.phase2-coexist.candidate.json|600
-.config/codex-room/paseo.phase2-hard-cut.candidate.json.template|.config/codex-room/paseo.phase2-hard-cut.candidate.json|600
-.local/bin/codex-room|.local/bin/codex-room|755
-.local/bin/codex-room-sync|.local/bin/codex-room-sync|755
-.local/bin/codex-room-hard-cut|.local/bin/codex-room-hard-cut|700
-.local/bin/codex-review-apply|.local/bin/codex-review-apply|700
-.local/bin/paseo-local-update|.local/bin/paseo-local-update|755
-.paseo/config.json.template|.paseo/config.json|600
-EOF
+done < <(printf '%s\n' \
+  '.config/codex-room/model-instructions.md|.config/codex-room/model-instructions.md|644' \
+  '.config/codex-room/overlays/supervisor.config.toml|.config/codex-room/overlays/supervisor.config.toml|600' \
+  '.config/codex-room/overlays/lead.config.toml|.config/codex-room/overlays/lead.config.toml|600' \
+  '.config/codex-room/overlays/peer.config.toml|.config/codex-room/overlays/peer.config.toml|600' \
+  '.config/codex-room/overlays/review.config.toml|.config/codex-room/overlays/review.config.toml|600' \
+  '.config/codex-room/workflow/WORKSPACE_PROTOCOL.md|.config/codex-room/workflow/WORKSPACE_PROTOCOL.md|644' \
+  '.config/codex-room/workflow/ANTI_PATTERNS.md|.config/codex-room/workflow/ANTI_PATTERNS.md|644' \
+  '.config/codex-room/paseo.phase2-coexist.candidate.json.template|.config/codex-room/paseo.phase2-coexist.candidate.json|600' \
+  '.config/codex-room/paseo.phase2-hard-cut.candidate.json.template|.config/codex-room/paseo.phase2-hard-cut.candidate.json|600' \
+  '.local/bin/codex-room|.local/bin/codex-room|755' \
+  '.local/bin/codex-room-sync|.local/bin/codex-room-sync|755' \
+  '.local/bin/codex-room-hard-cut|.local/bin/codex-room-hard-cut|700' \
+  '.local/bin/codex-review-apply|.local/bin/codex-review-apply|700' \
+  '.local/bin/paseo-local-update|.local/bin/paseo-local-update|755' \
+  '.paseo/config.json.template|.paseo/config.json|600')
+
+install_one ".local/bin/paseo-phase2-candidate" ".local/bin/paseo-phase2-candidate" 755
 
 install_once \
   ".config/codex-room/workflow/SUPERVISOR_NOTEBOOK.md" \

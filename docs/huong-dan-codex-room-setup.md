@@ -204,7 +204,7 @@ Cách phù hợp là tách hai phạm vi thực sự độc lập hoặc cho m�
 
 #### Peer overlay
 
-Peer là cộng tác viên kỹ thuật cho một outcome bị giới hạn. Peer có thể tạm thời làm implementer, architect, scout hoặc reviewer; đó là trách nhiệm theo nhiệm vụ, không phải thêm role cố định.
+Peer là cộng tác viên kỹ thuật cho một outcome bị giới hạn. Peer có thể tạm thời làm implementer, architect, scout hoặc reviewer. Peer cũng thực hiện review độc lập về premise, architecture, solution shape và rủi ro macro. Đây là trách nhiệm theo nhiệm vụ, không phải thêm role cố định.
 
 Peer được phép phản hồi ba tín hiệu quan trọng:
 
@@ -216,15 +216,21 @@ Ví dụ, Lead giao “thêm cache vào adapter X”, nhưng Peer chứng minh d
 
 #### Review overlay
 
-Review là profile đọc và phản biện một candidate cố định. Mặc định dùng `gpt-5.6-luna` với reasoning `max`.
+Review là profile OCR-assisted, chỉ đọc và phản biện một candidate cố định, có phạm vi giới hạn. Dùng Review khi việc chọn file hoặc rule còn bất định đáng kể. Mặc định dùng `gpt-5.6-luna` với reasoning `max`.
 
 Review phải:
 
 - xác nhận chính xác commit hoặc snapshot đang review;
+- trong `DEEP EXPLORATORY`, chạy `command -v ocr`, rồi `ocr delegate preview`, rồi `ocr delegate rule`;
+- trả `DEPENDENCY_REQUEST` nếu bất kỳ lệnh nào lỗi, kết quả rỗng hoặc sai định dạng, lựa chọn file/rule không hợp lệ, hoặc kết quả không thể đối chiếu với candidate và contract;
+- không thay OCR lỗi bằng review thủ công;
+- tự kiểm tra lại file, rule và finding do OCR chọn;
 - dừng với `STALE_CANDIDATE` nếu candidate đổi giữa chừng;
 - hạch toán 100% file trong candidate;
 - đưa finding theo dạng bằng chứng → hậu quả → cách bác bỏ → sửa nhỏ nhất;
 - không sửa code và không tự ra phán quyết `ACCEPT`/`REVISE`.
+
+Lead không chạy OCR. `FAST CLOSEOUT` không chạy OCR theo mặc định khi finding ID, correction base và delta đã rõ.
 
 Review còn bị xóa toàn bộ bảng `mcp_servers` kế thừa từ config gốc. Đây là phòng vệ thứ hai ngoài việc Paseo không inject MCP vào provider Review.
 
@@ -234,7 +240,11 @@ Ba file trong thư mục này có mục đích khác nhau:
 
 #### `WORKSPACE_PROTOCOL.md`
 
-Đây là “hiến pháp ngắn” của room. Nó định nghĩa:
+Đây là tài liệu tham chiếu được giữ lại. Các profile và role runtime không tải
+file này. Mỗi workspace có thể đặt protocol riêng tại
+`docs/WORKSPACE_PROTOCOL.md`.
+
+Tài liệu tham chiếu định nghĩa:
 
 - Human quyết định mục tiêu sản phẩm, chi phí, tác động bên ngoài và trade-off rủi ro;
 - Supervisor quản trị portfolio và workflow;

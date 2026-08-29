@@ -9,3 +9,7 @@ The source of truth for fork provenance is [`paseo/source.toml`](../paseo/source
 `scripts/install-paseo-fork` clones or verifies the remotes, then links `~/.local/bin/paseo` to the checkout's `packages/cli/bin/paseo` Node entrypoint. A conflicting CLI is backed up under `~/.codex-room-backups/` before replacement. It does not pull or build an existing checkout. `scripts/update-paseo-fork` delegates to the installed `paseo-local-update`, whose macOS build and replacement behavior is documented in [`paseo/notes/desktop-build.md`](../paseo/notes/desktop-build.md).
 
 Access to the fork remote is an operator prerequisite. The installer does not manage SSH keys or GitHub authentication.
+
+For the Phase 2 experiment, use the isolated candidate launcher and pilot in
+[`phase-2-runtime-gates-pilot.md`](phase-2-runtime-gates-pilot.md). It does not
+replace the Desktop app or restart the shared daemon.

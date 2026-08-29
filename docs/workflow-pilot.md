@@ -3,10 +3,13 @@
 This pilot tests whether explicit planning, reopening, foundation, reconciliation,
 and ownership rules improve real work before Paseo stores or enforces them.
 
-The shared baseline is
-`home/.config/codex-room/workflow/WORKSPACE_PROTOCOL.md`. A project may refine it
-in `docs/WORKSPACE_PROTOCOL.md`. The project file should contain only local
-constraints and tactics; it is not a copied task tracker.
+The separate [Phase 2 runtime-gates pilot](phase-2-runtime-gates-pilot.md) tests
+Paseo observation and enforcement. Phase 1.1 remains the default workflow.
+
+The role overlays contain the default pilot behavior. A workspace may define
+local constraints and tactics in `docs/WORKSPACE_PROTOCOL.md`. The retained
+`home/.config/codex-room/workflow/WORKSPACE_PROTOCOL.md` is a reference artifact;
+profiles and generated role runtimes do not load it.
 
 ## What the pilot changes
 
@@ -27,21 +30,41 @@ failure modes, not to make every task ceremonial.
 
 ## Phase 1 review strategy
 
-Lead selects the smallest sufficient review class before creating a Reviewer:
+Lead selects the smallest sufficient route:
 
-| Class | Use | Default model | Expected rounds |
+| Route | Use | Default model | Expected rounds |
 | --- | --- | --- | --- |
 | `NO_REVIEW` | Tiny or low-risk work Lead can inspect directly | none | 0 |
-| `FAST` | Bounded correction close-out | Sol Medium | 1 close-out |
-| `DEEP` | Consequential exploratory falsification | Luna Max | 1 exploratory review |
-| `DUAL` | Two distinct, independent review lanes | lane-specific | concurrent |
+| Read-only Peer | Premise, architecture, solution-shape, or non-OCR macro review | Sol Medium | 1 bounded review |
+| `FAST` Review | Accepted findings, correction base, and bounded delta | Sol Medium | 1 close-out |
+| `DEEP` Review | OCR-assisted frozen candidate with uncertain file or rule selection | Luna Max | 1 exploratory review |
+| `DUAL` | OCR lane plus a distinct Peer macro lane when system risk warrants both | lane-specific | concurrent |
+
+Review is pull-based. A new diff, commit, frontier, or completed Peer task is
+not itself a review trigger. Dispatch independent review only when its result
+can change the next technical decision and deterministic checks cannot answer
+the concern more cheaply. Review a premise early when a wrong choice would lock
+architecture or lifecycle. Before an irreversible or owner-gated action,
+review only when material residual risk remains after owning checks. Otherwise,
+batch related work at one stable integration or acceptance boundary.
+
+Lead never runs OCR. The Review agent runs `command -v ocr`, then
+`ocr delegate preview`, then `ocr delegate rule` for every `DEEP EXPLORATORY`
+review. It independently verifies the selected files, selected rules, and
+findings. Any command failure, empty or malformed result, invalid file or rule
+selection, or result that cannot be reconciled with the candidate and contract
+causes `DEPENDENCY_REQUEST`. There is no manual fallback. A clear `FAST`
+close-out does not invoke OCR by default. `codex-review` is not a general macro
+review route. The same provider offers Luna Max as the default for `DEEP` and
+Sol Medium as a non-default choice for `FAST`.
 
 An exploratory review returns one complete batch of material findings. Lead
 rules once and freezes the accepted finding set. One writer owns one correction
 batch. Close-out checks only that finding set, the correction delta, and direct
 regressions. If close-out would require a second correction in the same finding
-family, reconciliation is required before another dispatch. Do not start a
-third review loop automatically.
+family, reconciliation is required before another dispatch. The limit is one
+exploratory batch, one correction batch, and one bounded close-out. Do not start
+a third review loop automatically.
 
 For pilot observability, Lead labels review seats with `review_class`,
 `review_mode`, `review_lane`, `review_round`, `candidate`, and
@@ -65,9 +88,9 @@ make test
 ./scripts/verify
 ```
 
-The workflow protocol is symlinked into each role runtime. Role overlays also
-point to the installed shared protocol and the optional project refinement.
-Installing or syncing does not restart Paseo.
+The workflow protocol is not symlinked into role runtimes. Role overlays read
+only the optional workspace-local `docs/WORKSPACE_PROTOCOL.md`. Installing or
+syncing does not restart Paseo.
 
 ## Run a useful comparison
 

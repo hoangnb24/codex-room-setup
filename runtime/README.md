@@ -13,3 +13,5 @@ Expected top-level roles:
 
 Use `scripts/export-runtime-snapshots` for sanitized local summaries. Snapshot directories are ignored by default.
 
+The Review runtime supports OCR-assisted inspection of frozen, bounded
+candidates. It remains behaviorally read-only and does not inherit MCP servers.
