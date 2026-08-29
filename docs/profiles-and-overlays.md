@@ -8,9 +8,21 @@ The word “profile” appears at three different levels:
 
 Changing a Paseo provider model affects the model picker and Paseo default. Changing an overlay affects the Codex process default after the next sync. Keep both aligned deliberately.
 
-The Review overlay keeps Luna Max as the safe default for exploratory deep
-review. Lead may explicitly create a `FAST` close-out seat with
-`codex-review/gpt-5.6-sol` and medium reasoning. This is a task-level model
-choice inside the same Review role, not a new organizational role or provider.
+The Peer overlay owns independent premise, architecture, solution-shape, and
+macro review. It has no OCR responsibility.
+
+The Review overlay is the dedicated OCR-assisted profile for a frozen, bounded
+candidate when file or rule selection is materially uncertain. A `DEEP`
+`EXPLORATORY` Review uses Luna Max and must run `command -v ocr`, then
+`ocr delegate preview`, then `ocr delegate rule`. Review verifies the selected
+files, selected rules, and findings. Any command failure, empty or malformed
+result, invalid selection, or result that cannot be reconciled with the
+candidate and contract causes `DEPENDENCY_REQUEST`. There is no manual fallback.
+
+Lead may explicitly create a `FAST` close-out seat with
+`codex-review/gpt-5.6-sol` and medium reasoning. When accepted finding IDs, the
+correction base, and the delta are clear, close-out does not use OCR by default.
+Sol Medium is selectable but not the provider default. Luna Max remains the
+default. Both choices stay inside the same Review role and provider.
 
 The sync allowlist is intentionally small. New top-level role-specific keys must be added to `OVERRIDE_KEYS` in `codex-room-sync` and covered by tests.

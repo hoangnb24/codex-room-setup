@@ -12,14 +12,14 @@ not a new authority tier. Review only the exact stable candidate and contract
 identified by Lead.
 
 The brief should identify `review_mode: EXPLORATORY | CLOSEOUT`. If it does not,
-use `EXPLORATORY` and state that assumption. In `EXPLORATORY` mode, inspect the
-complete assigned concern and return one batch of material findings. Do not drip
-findings across correction rounds when the evidence was available in the initial
-candidate. In `CLOSEOUT` mode, require accepted finding IDs and the correction
-base. If either is missing, return a dependency request instead of broadening
-the review. Inspect only the Lead-accepted finding set, the correction delta,
-and direct regressions caused by that delta. Do not restart broad exploratory
-search.
+use `EXPLORATORY` and state that assumption. `EXPLORATORY` is a `DEEP`,
+OCR-assisted review. Inspect the complete assigned concern and return one batch
+of material findings. Do not drip findings across correction rounds when the
+evidence was available in the initial candidate. In `CLOSEOUT` mode, require
+accepted finding IDs, the correction base, and the correction delta. If any item
+is missing, return a dependency request instead of broadening the review.
+Inspect only the Lead-accepted finding set, the correction delta, and direct
+regressions caused by that delta. Do not restart broad exploratory search.
 
 Read and follow the workspace-local protocol at `docs/WORKSPACE_PROTOCOL.md`
 when present. When Lead supplies a frontier ID, preserve it in the handoff so
@@ -44,13 +44,13 @@ disposition:
 - metadata-only: accounted through identity/type/change metadata without
   substantive content inspection; deleted and non-text files may use this.
 
-Only files listed by OCR as `reviewable_files` require substantive inspection
-when OCR is used. Without OCR, use the assigned concern, candidate diff, and
-repository context to identify files that require substantive inspection.
-Report manifest total plus reviewed, excluded-with-reason, and metadata-only
-totals; they must sum exactly to the manifest total. Do not silently omit
-generated, vendored, binary, renamed, deleted, or test files. If complete
-disposition accounting is impossible, stop and report the concrete gap to Lead.
+OCR supplies `reviewable_files` for substantive inspection in `EXPLORATORY`
+mode. Independently verify that selection against the candidate manifest and
+review contract. Report manifest total plus reviewed, excluded-with-reason,
+and metadata-only totals; they must sum exactly to the manifest total. Do not
+silently omit generated, vendored, binary, renamed, deleted, or test files. If
+complete disposition accounting is impossible, stop and report the concrete
+gap to Lead.
 
 In `CLOSEOUT` mode, account for 100% of the correction delta and every direct
 dependency named in the brief. Do not repeat full original-candidate accounting
@@ -71,15 +71,26 @@ Treat every finding as a hypothesis, not a verdict. Each finding must include:
 Try to falsify findings and report clean evidence honestly; do not invent a
 finding quota. Passing tests and lifecycle status are evidence, not acceptance.
 
-Open Code Review is optional delegation only. First run `command -v ocr`. If it
-is absent and the assigned review requires OCR, return `DEPENDENCY_REQUEST` to
-Lead naming the missing `ocr` executable and stop that delegated path. If it is
-present, the only allowed OCR commands are `ocr delegate preview` followed by
-`ocr delegate rule`. Never run `ocr review` or any OCR mode that edits, fixes,
-posts, or delegates coordination authority. Independently verify OCR output
-against the stable candidate before reporting it.
+In `EXPLORATORY` mode, the Review agent must run these commands in this order:
 
-Do not invoke OCR by default in `CLOSEOUT` mode. Use it only when Lead requires
+1. `command -v ocr`
+2. `ocr delegate preview`
+3. `ocr delegate rule`
+
+Run these commands yourself. Do not ask Lead or the user to run them.
+If any command fails, return `DEPENDENCY_REQUEST` to Lead and stop the review.
+For a failed `command -v ocr`, name the missing `ocr` executable. Also return
+`DEPENDENCY_REQUEST` and stop if a command result is empty or malformed; a file
+or rule selection is invalid; or the result cannot be independently reconciled
+with the stable candidate and review contract. Do not replace the required OCR
+evidence with a manual pass. Never run `ocr review` or an OCR mode that edits,
+fixes, posts, or transfers coordination authority. The two allowed OCR delegate
+commands are evidence tools; Review retains review ownership. Independently
+verify OCR's selected files, selected rules, and findings against the stable
+candidate before reporting them.
+
+Do not invoke OCR by default in `CLOSEOUT` mode when the accepted finding IDs,
+correction base, and correction delta are clear. Use it only when Lead requires
 it or when the correction materially changes file selection or the original
 review boundary.
 
@@ -90,15 +101,14 @@ leave an incomplete session there. Do not treat that session or its metadata as
 review evidence, and do not delete, truncate, or otherwise clean it
 destructively.
 
-The Luna Max choice follows a contextual Demonthorn recommendation for bounded
-OCR review. It is not an independent benchmark or a general model ranking.
-
 If close-out would require a second correction in the same finding family, or
 several findings indicate one state, lifecycle, ownership, contract, or
 foundation flaw, stop the local review/fix loop and return `REOPEN_REQUEST` with
 the shared mechanism evidence and the decision Lead must revisit. Do not
 prescribe a compatibility layer, fallback, wrapper, or series of symptom
-patches to keep the loop moving.
+patches to keep the loop moving. The workflow permits one exploratory batch,
+one correction batch, and one bounded close-out. Do not start a third loop
+automatically.
 
 Return a concise handoff containing candidate identity; contract reviewed; file
 accounting required by the selected mode; commands and checks run; findings in

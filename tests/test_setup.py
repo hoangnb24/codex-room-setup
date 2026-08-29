@@ -39,6 +39,8 @@ class SetupShapeTests(unittest.TestCase):
             providers["codex-review"]["command"],
             ["/tmp/operator/.local/bin/codex-room", "review"],
         )
+        self.assertEqual(providers["codex-review"]["label"], "Codex Review (OCR-assisted)")
+        self.assertIn("frozen bounded candidates", providers["codex-review"]["description"])
 
     def test_role_defaults_are_aligned(self) -> None:
         config = json.loads(PASEO_TEMPLATE.read_text().replace("@@HOME@@", "/tmp/operator"))
@@ -64,6 +66,23 @@ class SetupShapeTests(unittest.TestCase):
             self.assertEqual(default["id"], model)
             thinking = next(item for item in default["thinkingOptions"] if item.get("isDefault"))
             self.assertEqual(thinking["id"], effort)
+
+    def test_review_provider_offers_deep_default_and_fast_choice(self) -> None:
+        config = json.loads(PASEO_TEMPLATE.read_text().replace("@@HOME@@", "/tmp/operator"))
+        models = config["agents"]["providers"]["codex-review"]["models"]
+        self.assertEqual([model["id"] for model in models], ["gpt-5.6-luna", "gpt-5.6-sol"])
+
+        luna, sol = models
+        self.assertTrue(luna["isDefault"])
+        self.assertEqual(
+            luna["thinkingOptions"],
+            [{"id": "max", "label": "Max", "isDefault": True}],
+        )
+        self.assertNotIn("isDefault", sol)
+        self.assertEqual(
+            sol["thinkingOptions"],
+            [{"id": "medium", "label": "Medium", "isDefault": True}],
+        )
 
     def test_no_private_state_or_machine_home_is_tracked(self) -> None:
         forbidden_names = {
@@ -326,6 +345,71 @@ class SetupShapeTests(unittest.TestCase):
         self.assertIn("PEER_DISPOSITION v1", peer)
         self.assertIn("workflow pilot", supervisor)
 
+    def test_review_routing_and_ocr_boundaries(self) -> None:
+        config = json.loads(PASEO_TEMPLATE.read_text().replace("@@HOME@@", "/tmp/operator"))
+        providers = config["agents"]["providers"]
+        self.assertIn("codex-review", providers)
+        self.assertNotIn("codex-ocr", providers)
+        self.assertNotIn("codex-review", config["daemon"]["mcp"]["injectIntoProviders"])
+
+        lead = (ROOM / "overlays" / "lead.config.toml").read_text()
+        lead_words = " ".join(lead.split())
+        self.assertIn("Use `NO_REVIEW` for tiny or low-risk work", lead_words)
+        self.assertIn("Use a read-only ordinary Peer", lead_words)
+        self.assertIn("Lead never runs OCR", lead_words)
+        self.assertIn("Use `codex-review` only for an OCR-assisted review", lead_words)
+        self.assertIn("Review returns `DEPENDENCY_REQUEST` and stops if any command fails", lead_words)
+        self.assertIn("any result is empty or malformed", lead_words)
+        self.assertIn("a file or rule selection is invalid", lead_words)
+        self.assertIn(
+            "result cannot be independently reconciled with the candidate and contract",
+            lead_words,
+        )
+        self.assertIn("Do not substitute a manual or non-OCR", lead_words)
+        self.assertIn(
+            "one exploratory batch, one correction batch, and one bounded close-out",
+            lead_words,
+        )
+        self.assertIn("does not use OCR by default", lead_words)
+
+        peer = (ROOM / "overlays" / "peer.config.toml").read_text()
+        self.assertIn("system-level macro judgment", " ".join(peer.split()))
+        self.assertNotIn("ocr", peer.lower())
+        self.assertNotIn("open code review", peer.lower())
+
+        review = (ROOM / "overlays" / "review.config.toml").read_text()
+        command_check = review.index("`command -v ocr`")
+        preview = review.index("`ocr delegate preview`", command_check)
+        rule = review.index("`ocr delegate rule`", preview)
+        self.assertLess(command_check, preview)
+        self.assertLess(preview, rule)
+        review_words = " ".join(review.split())
+        self.assertIn("If any command fails, return `DEPENDENCY_REQUEST`", review_words)
+        self.assertIn("command result is empty or malformed", review_words)
+        self.assertIn("file or rule selection is invalid", review_words)
+        self.assertIn(
+            "result cannot be independently reconciled with the stable candidate and review contract",
+            review_words,
+        )
+        self.assertIn("Do not replace the required OCR evidence with a manual pass", review_words)
+        self.assertIn("selected files, selected rules, and findings", review_words)
+        self.assertIn("Do not ask Lead or the user to run them", review_words)
+        self.assertIn("Do not invoke OCR by default in `CLOSEOUT` mode", review_words)
+        self.assertIn("Behavioral read-only", review_words)
+        self.assertIn("Do not start a third loop automatically", review_words)
+
+    def test_lead_review_is_pull_based(self) -> None:
+        lead = (ROOM / "overlays" / "lead.config.toml").read_text()
+        expected = """
+            Review is pull-based. A new diff, commit, frontier, or completed Peer task is
+            not itself a review trigger. Dispatch independent review only when its result
+            can change the next technical decision and deterministic checks cannot answer
+            the concern more cheaply. Review a premise early when a wrong choice would lock
+            architecture or lifecycle. Before an irreversible or owner-gated action,
+            review only when material residual risk remains after owning checks. Otherwise,
+            batch related work at one stable integration or acceptance boundary.
+        """
+        self.assertIn(" ".join(expected.split()), " ".join(lead.split()))
 
 class RuntimeGenerationTests(unittest.TestCase):
     def setUp(self) -> None:

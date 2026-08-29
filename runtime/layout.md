@@ -17,4 +17,8 @@
 as a reference file. Role runtimes do not link to it. A workspace can define its
 own protocol at `docs/WORKSPACE_PROTOCOL.md`.
 
+The Review runtime is the read-only, OCR-assisted stable-candidate profile. It
+does not inherit MCP servers. OCR operational metadata is the only allowed
+write from Review behavior.
+
 Supervisor additionally owns a durable `SUPERVISOR_NOTEBOOK.md` initialized from the workflow template.
