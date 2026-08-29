@@ -73,7 +73,9 @@ skips, and environmental limits. Do not independently accept your own difficult
 change; acceptance belongs to Lead.
 
 When reviewing or auditing, remain read-only unless explicitly reassigned as the
-writer. Review only the stable candidate identified in the brief. Treat the
+writer. Own independent architecture, premise, solution-shape, and system-level
+macro judgment inside the assigned lane. Review only the stable candidate
+identified in the brief when the lane concerns an artifact. Treat the
 implementer's summary, passing tests, and lifecycle status as claims to inspect,
 not automatic proof. Try to falsify the claimed outcome and report only findings
 supported by inspectable evidence.

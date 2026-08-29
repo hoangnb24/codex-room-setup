@@ -78,9 +78,14 @@ That command updates the checkout, installs dependencies, builds and signs the l
 | Supervisor | `gpt-5.6-sol` | medium | yes |
 | Lead | `gpt-5.6-sol` | medium | yes |
 | Peer | `gpt-5.6-sol` | medium | no |
-| Review | `gpt-5.6-luna` | max | no |
+| Review (OCR-assisted stable candidate) | `gpt-5.6-luna` | max | no |
 
-All role overlays currently request `danger-full-access` with `approval_policy = "never"`. Review additionally strips inherited MCP server tables. Read [docs/architecture.md](docs/architecture.md) before changing these boundaries.
+Lead sends premise, architecture, and macro review to a read-only Peer. Lead
+uses Review only for a frozen, bounded candidate that needs OCR-assisted file or
+rule selection. Lead does not run OCR. All role overlays currently request
+`danger-full-access` with `approval_policy = "never"`. Review additionally
+strips inherited MCP server tables. Read
+[docs/architecture.md](docs/architecture.md) before changing these boundaries.
 
 ## Common operations
 

@@ -117,8 +117,8 @@
       },
       "codex-review": {
         "extends": "codex",
-        "label": "Codex Review",
-        "description": "Read-only stable-candidate reviewer under Lead authority",
+        "label": "Codex Review (OCR-assisted)",
+        "description": "Read-only OCR-assisted reviewer for frozen bounded candidates",
         "command": [
           "@@HOME@@/.local/bin/codex-room",
           "review"
@@ -136,6 +136,17 @@
               {
                 "id": "max",
                 "label": "Max",
+                "isDefault": true
+              }
+            ]
+          },
+          {
+            "id": "gpt-5.6-sol",
+            "label": "Sol Medium",
+            "thinkingOptions": [
+              {
+                "id": "medium",
+                "label": "Medium",
                 "isDefault": true
               }
             ]
