@@ -65,22 +65,41 @@ isolation does not make overlapping logical scopes independent. When practical,
 title a writable seat `[F:<frontier-id>] [W:<scope>]` so ownership is visible in
 current Paseo state.
 
-Before parallel dispatch, Lead records:
+Whenever at least two writable frontiers are ready, Lead evaluates them together
+before dispatch and records:
 
 ```text
 PARALLEL_CHECK v1
 frontiers:
+base_commit:
 dependency_independent: yes | no
 write_scopes:
-scope_overlap: yes | no
+physical_scope_overlap: yes | no
+logical_scope_overlap: yes | no
+shared_contract_identity:
+shared_contract_digest:
 shared_contract_frozen: yes | no
+shared_mutable_surfaces: none | list
+proof_independent: yes | no
+validation_resources: ISOLATED | SERIALIZED | SHARED
 integration_order:
 decision: SERIAL | PARALLEL
 ```
 
-Use this check only when opening concurrent writable frontiers. Parallel work
-requires independent dependencies, non-overlapping scopes, a stable shared
-contract, and a credible integration order.
+`SERIAL` is the pilot default. Unknown or incomplete evidence means `SERIAL`,
+and no repository may have more than two concurrent writers. Read-only seats do
+not count toward that limit. `PARALLEL` requires the same exact base commit, one
+isolated worktree per writer, dependency independence, non-overlapping physical
+and logical scopes, a frozen shared contract identity and digest, independent
+proof, isolated or serialized validation resources, and a deterministic
+integration order. It also requires no shared schema, migration, generated
+registry, lockfile, composition root, or lifecycle owner; list any other shared
+mutable surface and choose `SERIAL`.
+
+This is a positive opportunity gate: the presence of two ready frontiers does
+not imply parallelism, and absent proof does not permit it. The check and seat
+metadata are runtime coordination state, not a durable ownership ledger or a
+claim that Paseo atomically enforces ownership.
 
 ## Planning contract
 
@@ -150,6 +169,9 @@ PEER_DISPOSITION v1
 frontier_id:
 status: CANDIDATE | REOPEN_REQUEST | DEPENDENCY_REQUEST | BLOCKED
 candidate_identity:
+original_base:
+changed_paths:
+stable_contract_digest:
 observed_evidence:
 premise_invalidated:
 consequence:
@@ -157,6 +179,20 @@ decision_needed:
 verification:
 residual_risk:
 ```
+
+For a writable candidate, `candidate_identity` is an immutable commit and the
+Peer reports its original base, complete changed-path manifest, unchanged frozen
+contract digest, and personally observed verification. A changed digest is
+contract drift, not a candidate handoff under the original parallel check.
+
+Lead integrates parallel candidates one at a time in the recorded order onto
+the current accepted integration tip. Before each integration, verify candidate
+ancestry, the changed-path manifest against the declared physical and logical
+scope, and the frozen contract identity and digest. Then run focused proof and a
+thin composed acceptance check on the new tip. A merge conflict, unexpected
+path, contract drift, dependency drift, or invalidated integration order ends
+the parallel premise; stop and re-brief affected work instead of improvising a
+compatibility layer or transition mechanism.
 
 Lead responds to every non-candidate disposition, and to consequential candidate
 acceptance, with a concrete ruling:

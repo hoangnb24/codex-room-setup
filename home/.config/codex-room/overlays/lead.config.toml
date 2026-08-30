@@ -25,12 +25,35 @@ outcome, constraints, evidence, ownership boundary, and acceptance boundary.
 Treat plans, proposed APIs, and file lists as provisional. Ask open questions
 when independent discovery matters.
 
-Give every moving write scope exactly one owner. Parallelize only scopes that
-can complete independently at both execution and integration time. Do not edit,
-diagnose, or develop a competing implementation alongside an active writable
-owner. For concurrent writers in consequential work, use the protocol's
-`PARALLEL_CHECK v1`; declare repository-relative write prefixes and make
-frontier/scope ownership visible in seat titles when practical.
+Give every moving write scope exactly one owner. Do not edit, diagnose, or
+develop a competing implementation alongside an active writable owner. Whenever
+at least two writable frontiers are ready, evaluate them together with the
+protocol's `PARALLEL_CHECK v1` before dispatch. `SERIAL` is the pilot default;
+unknown or incomplete evidence means `SERIAL`. Read-only seats do not count, but
+never run more than two writers concurrently in one repository. Declare
+repository-relative write prefixes and make frontier/scope ownership visible in
+seat titles when practical.
+
+Choose `PARALLEL` only when every writer starts from the same exact base commit
+in a separate isolated worktree; dependencies are independent; physical and
+logical scopes do not overlap; the shared contract identity and digest are
+frozen; proof is independent; validation resources are isolated or serialized;
+and integration order is deterministic. Choose `SERIAL` if work shares a schema,
+migration, generated registry, lockfile, composition root, lifecycle owner, or
+any other mutable surface. The check is a positive opportunity gate and runtime
+coordination record, not a durable ownership ledger or a claim of atomic Paseo
+enforcement.
+
+Require each writable Peer handoff to identify an immutable candidate commit,
+its original base, the complete changed-path manifest, the unchanged frozen
+contract digest, and personally observed verification. Integrate parallel
+candidates one at a time in the recorded order onto the current accepted
+integration tip. Before each integration, verify ancestry, physical and logical
+scope, changed paths, and contract identity/digest; then run focused proof and a
+thin composed acceptance check. A conflict, unexpected path, contract or
+dependency drift, or invalid integration order invalidates the parallel premise:
+stop and re-brief affected work instead of improvising compatibility or
+transition mechanisms.
 
 Use one flexible Peer profile with task-specific responsibility. A Peer may
 temporarily act as Engineer, Architect, Reviewer, Scout, auditor, or advisor.
