@@ -122,4 +122,14 @@ request, tool-call, timing, and API-equivalent cost definitions.
 See [docs/workflow-pilot.md](docs/workflow-pilot.md) for the setup-only workflow
 experiment and the evidence threshold for adding Paseo enforcement.
 
+The workflow pilot also supports a guarded multiple-writer operation. Whenever
+at least two writable frontiers are ready, Lead runs a positive concurrency
+gate; the safe default remains `SERIAL`, and at most two writers may run at once
+in a repository. Admission requires separate worktrees at one exact base,
+independent physical and logical scopes, a frozen contract, and commit-only
+handoffs. Lead integrates the commits serially and verifies the composed result.
+See [docs/workflow-pilot.md](docs/workflow-pilot.md#guarded-multiple-writer-pilot)
+for the contract and [docs/operations.md](docs/operations.md#run-the-guarded-multiple-writer-pilot)
+for the runbook.
+
 Official Codex configuration precedence is documented by OpenAI in the [Codex config basics](https://learn.chatgpt.com/docs/config-file/config-basic.md). `codex-room` uses a separate `CODEX_HOME` per role; this is a local orchestration layer, not a replacement for the operator's Codex installation.

@@ -25,6 +25,85 @@ contracts:
 Tiny bounded work may stay concise. The formats exist to expose decisions and
 failure modes, not to make every task ceremonial.
 
+## Guarded multiple-writer pilot
+
+This operation tests whether two genuinely independent writable frontiers can
+reduce time to an accepted result without increasing correction work. It is a
+positive gate: whenever at least two writable frontiers are ready, Lead must
+evaluate them for concurrent admission and record `PARALLEL_CHECK v1`, even when
+the ruling is `SERIAL`.
+
+The default is `SERIAL`, the maximum is two concurrent writers per repository,
+and an unknown or unverified condition resolves to `SERIAL`. Concurrency is an
+explicit exception after all admission checks pass, not a property inferred
+from having multiple available agents.
+
+### Admission contract
+
+Lead may admit two writers only when all of these statements are true:
+
+- Both candidates start from the same exact base commit.
+- Each writer has a separate Git worktree and branch.
+- Their physical write scopes do not overlap, and their logical responsibilities
+  can change independently.
+- Lead freezes the shared contract and records one digest of it in both briefs.
+- Neither frontier changes a shared integration surface, including a common
+  schema, public API, composition root, generated artifact, migration, lockfile,
+  or shared test fixture.
+- Each writer hands off one immutable commit. A writer does not amend or replace
+  a handed-off commit while Lead is evaluating or integrating it.
+
+Worktree isolation prevents two processes from writing the same checkout. It
+does not prove logical independence: disjoint files can still encode coupled
+changes to one API, lifecycle, invariant, or generated output. The
+`PARALLEL_CHECK v1` must therefore name both physical scopes and the logical
+contract or responsibility owned by each frontier.
+
+This is prompt-level policy. Paseo does not atomically reserve scopes, enforce
+the two-writer limit, freeze a contract digest, or prevent a commit from being
+rewritten. Lead observes and enforces the pilot in the room. Product enforcement
+is deferred until at least two comparable misses show that the same absent
+runtime mechanism caused a coordination failure.
+
+### Dispatch and handoff evidence
+
+The positive gate records the candidate frontier IDs, exact base commit,
+physical and logical scopes, frozen contract digest, shared-surface check,
+writer count, and `PARALLEL` or `SERIAL` ruling. Each admitted
+`FRONTIER_BRIEF v1` repeats that evidence and grants exactly one writable scope.
+
+Each `PEER_DISPOSITION v1` returns the frontier ID, immutable candidate commit,
+base commit, changed paths, personally run verification, and residual risk.
+Lead rejects a candidate that includes paths outside its scope, has the wrong
+base, depends on an unaccepted sibling candidate, or changes the frozen
+contract. A required cross-frontier change is evidence that the work was not
+independent; it is not repaired by asking both writers to edit the same surface.
+
+### Serial integration and proof
+
+Lead integrates one immutable commit at a time onto the current accepted tip.
+After each integration Lead checks the candidate's path scope and runs its
+focused proof. After the second integration Lead runs the focused checks for
+both frontiers plus the composed proof on the new accepted tip. A conflict,
+contract mismatch, or composed failure stops acceptance and is recorded as
+correction evidence; concurrent writers never reconcile each other.
+
+### Falsifiable success
+
+Compare a guarded run with a comparable serial run while holding the base,
+objective, models, reasoning effort, and acceptance boundary fixed. Record
+gate decisions, dispatch-to-handoff time, time to accepted composed proof,
+correction batches, conflicts, contract reopens, stale candidates, and escaped
+defects.
+
+The pilot succeeds only when the guarded run shows a velocity gain to the same
+accepted outcome without more correction, weaker proof, scope collisions, or
+contract drift. A concurrency decision, two fast handoffs, or clean individual
+tests alone are not success. No measured velocity gain, any increase in
+correction, or a composed failure falsifies the benefit for that comparison and
+returns the next comparable workstream to `SERIAL` unless a new positive gate
+admits it.
+
 ## Phase 1 review strategy
 
 Lead selects the smallest sufficient route:
