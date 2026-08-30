@@ -50,7 +50,7 @@ check "room sync exists" test -f "$sync_path"
 check "workspace protocol exists" test -f "$workflow_root/WORKSPACE_PROTOCOL.md"
 check "workflow pilot reporter is executable" test -x "$REPO_ROOT/scripts/workflow-pilot-report"
 
-for role in supervisor lead peer review; do
+for role in supervisor lead peer review harness; do
   check "$role overlay exists" test -f "$overlays_root/$role.config.toml"
 done
 
@@ -64,12 +64,17 @@ for marker in \
   check "workspace protocol includes $marker" grep -Fq "$marker" "$workflow_root/WORKSPACE_PROTOCOL.md"
 done
 
-check "four derived Codex providers" jq -e '
+check "five derived Codex providers" jq -e '
   [.agents.providers | keys[] | select(startswith("codex-"))] |
-  sort == ["codex-lead", "codex-peer", "codex-review", "codex-supervisor"]
+  sort == ["codex-harness", "codex-lead", "codex-peer", "codex-review", "codex-supervisor"]
 ' "$config_template"
 check "MCP injection boundary" jq -e '
-  .daemon.mcp.injectIntoProviders == ["codex-supervisor", "codex-lead"]
+  .daemon.mcp.injectIntoProviders == ["codex-supervisor", "codex-lead", "codex-harness"]
+' "$config_template"
+check "harness defaults to Sol Medium" jq -e '
+  .agents.providers["codex-harness"].models[0] |
+  .id == "gpt-5.6-sol" and .isDefault == true and
+  .thinkingOptions[0].id == "medium" and .thinkingOptions[0].isDefault == true
 ' "$config_template"
 check "review defaults to Luna Max" jq -e '
   .agents.providers["codex-review"].models[0] |
@@ -81,7 +86,7 @@ if [[ "$mode" == installed ]]; then
   expected_paseo_cli="$HOME/projects/supervisors/paseo/packages/cli/bin/paseo"
   check "Paseo CLI links to local fork" test \
     "$(readlink "$HOME/.local/bin/paseo" 2>/dev/null || true)" = "$expected_paseo_cli"
-  for role in supervisor lead peer review; do
+  for role in supervisor lead peer review harness; do
     runtime="$HOME/.codex-runtime/$role"
     check "$role runtime config" test -f "$runtime/config.toml"
     check "$role native agent catalog" test -f "$runtime/model-catalog.no-native-agents.json"
@@ -89,14 +94,22 @@ if [[ "$mode" == installed ]]; then
       check "$role agents disabled" grep -Eq '^multi_agent(_v2)? = false$' "$runtime/config.toml"
     fi
   done
-  if [[ -f "$HOME/.codex-runtime/review/config.toml" ]]; then
-    if grep -Eq '^\[mcp_servers\.' "$HOME/.codex-runtime/review/config.toml"; then
-      log "FAIL  review inherited MCP servers"
-      failures=$((failures + 1))
-    else
-      log "OK    review has no inherited MCP servers"
+  for role in supervisor lead peer review; do
+    check "$role plugins use canonical symlink" test \
+      "$(readlink "$HOME/.codex-runtime/$role/plugins" 2>/dev/null || true)" = "$HOME/.codex/plugins"
+  done
+  check "harness plugins are private" test -d "$HOME/.codex-runtime/harness/plugins"
+  check "harness plugins are not a symlink" test ! -L "$HOME/.codex-runtime/harness/plugins"
+  for role in review harness; do
+    if [[ -f "$HOME/.codex-runtime/$role/config.toml" ]]; then
+      if grep -Eq '^\[mcp_servers\.' "$HOME/.codex-runtime/$role/config.toml"; then
+        log "FAIL  $role inherited MCP servers"
+        failures=$((failures + 1))
+      else
+        log "OK    $role has no inherited MCP servers"
+      fi
     fi
-  fi
+  done
 fi
 
 if [[ "$live" == true ]]; then
@@ -105,7 +118,7 @@ if [[ "$live" == true ]]; then
   if paseo provider ls --host 127.0.0.1:6767 --json >"$inventory_file" 2>/dev/null; then
     check "live custom provider inventory" jq -e '
       [.[].provider] as $p |
-      all(["codex-supervisor", "codex-lead", "codex-peer", "codex-review"][]; . as $id | $p | index($id) != null)
+      all(["codex-supervisor", "codex-lead", "codex-peer", "codex-review", "codex-harness"][]; . as $id | $p | index($id) != null)
     ' "$inventory_file"
   else
     log "FAIL  live Paseo provider inventory is unreachable"

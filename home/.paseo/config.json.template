@@ -7,7 +7,8 @@
       "enabled": true,
       "injectIntoProviders": [
         "codex-supervisor",
-        "codex-lead"
+        "codex-lead",
+        "codex-harness"
       ]
     },
     "browserTools": {
@@ -57,6 +58,33 @@
         "command": [
           "@@HOME@@/.local/bin/codex-room",
           "supervisor"
+        ],
+        "params": {
+          "sandbox_mode": "danger-full-access",
+          "approval_policy": "never"
+        },
+        "models": [
+          {
+            "id": "gpt-5.6-sol",
+            "label": "Sol Medium",
+            "isDefault": true,
+            "thinkingOptions": [
+              {
+                "id": "medium",
+                "label": "Medium",
+                "isDefault": true
+              }
+            ]
+          }
+        ]
+      },
+      "codex-harness": {
+        "extends": "codex",
+        "label": "Codex Harness",
+        "description": "Read-only Better Harness coordinator using isolated role evidence and Paseo Peers",
+        "command": [
+          "@@HOME@@/.local/bin/codex-room",
+          "harness"
         ],
         "params": {
           "sandbox_mode": "danger-full-access",

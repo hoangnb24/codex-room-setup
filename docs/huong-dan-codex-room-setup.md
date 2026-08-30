@@ -4,7 +4,7 @@ Tài liệu này dành cho người mới tiếp cận `codex-room-setup`. Mục
 
 ## 1. Bức tranh ngắn gọn nhất
 
-`codex-room-setup` tạo một “phòng làm việc” gồm bốn vai trò Codex:
+`codex-room-setup` tạo một “phòng làm việc” gồm năm vai trò Codex:
 
 | Vai trò | Trách nhiệm cốt lõi | Có công cụ điều phối Paseo |
 | --- | --- | --- |
@@ -12,6 +12,7 @@ Tài liệu này dành cho người mới tiếp cận `codex-room-setup`. Mục
 | Lead | Chịu trách nhiệm kỹ thuật của một dự án: chia việc, tích hợp, kiểm chứng và ra quyết định | Có |
 | Peer | Thực hiện hoặc điều tra một phạm vi cụ thể do Lead giao | Không |
 | Review | Đọc và phản biện một candidate ổn định; không sửa code | Không |
+| Harness | Điều phối một báo cáo Better Harness chỉ-đọc cho đúng một role home | Có |
 
 Hãy hình dung hệ thống như sau:
 
@@ -62,13 +63,14 @@ Không đóng gói auth cùng cấu hình chia sẻ
 
 ### 2.2 Mỗi role có một `CODEX_HOME` riêng
 
-Bốn thư mục runtime dự kiến là:
+Năm thư mục runtime dự kiến là:
 
 ```text
 ~/.codex-runtime/supervisor
 ~/.codex-runtime/lead
 ~/.codex-runtime/peer
 ~/.codex-runtime/review
+~/.codex-runtime/harness
 ```
 
 Các role dùng chung danh tính và tài nguyên ổn định, nhưng tách state có thể thay đổi:
@@ -79,19 +81,21 @@ Các role dùng chung danh tính và tài nguyên ổn định, nhưng tách sta
 | `AGENTS.md` | `sessions/` |
 | `hooks.json` | log, memory, queue |
 | `skills/` | SQLite và state runtime |
-| `plugins/` | model catalog đã xử lý |
+| `plugins/` (trừ Harness) | model catalog đã xử lý |
 
-Nhờ vậy, một session Review không trộn vào lịch sử của Lead, nhưng cả hai vẫn dùng cùng tài khoản Codex.
+Harness giữ `plugins/` riêng để Better Harness có vòng đời độc lập; bốn role
+còn lại vẫn nối tới `~/.codex/plugins`. Nhờ vậy, một session Review không trộn
+vào lịch sử của Lead, nhưng cả hai vẫn dùng cùng tài khoản Codex.
 
 ### 2.3 Paseo sở hữu topology; native Codex agents bị tắt
 
-Paseo quyết định ai là Supervisor, Lead, Peer và Review. Vì vậy bộ setup chủ động:
+Paseo quyết định ai là Supervisor, Lead, Peer, Review và Harness. Vì vậy bộ setup chủ động:
 
 - đặt `[agents].enabled = false`;
 - đặt `multi_agent = false` và `multi_agent_v2 = false`;
 - xóa `multi_agent_version` khỏi catalog model được sinh.
 
-Nếu không làm vậy, có thể tồn tại hai lớp điều phối song song: Paseo điều phối bốn role, trong khi Codex lại tự tạo native agents bên trong từng role. Hậu quả là ownership và luồng giao việc trở nên khó kiểm soát.
+Nếu không làm vậy, có thể tồn tại hai lớp điều phối song song: Paseo điều phối năm role, trong khi Codex lại tự tạo native agents bên trong từng role. Hậu quả là ownership và luồng giao việc trở nên khó kiểm soát.
 
 ## 3. Bốn loại file: biết loại trước khi sửa
 
@@ -120,7 +124,7 @@ codex-room-setup/
 └── home/
     ├── .config/codex-room/
     │   ├── model-instructions.md    Chỉ dẫn chung cho Codex
-    │   ├── overlays/                Cấu hình riêng của bốn role
+    │   ├── overlays/                Cấu hình riêng của năm role
     │   └── workflow/                Luật phối hợp giữa các role
     ├── .local/bin/
     │   ├── codex-room               Launcher chọn role
@@ -273,7 +277,7 @@ File không biến một nghi ngờ thành mệnh lệnh. Nó yêu cầu lập f
 
 ### 5.4 `.paseo/config.json.template`: catalog provider và ranh giới MCP
 
-File này nói cho Paseo biết có bốn provider Codex tùy biến. Mỗi provider có:
+File này nói cho Paseo biết có năm provider Codex tùy biến. Mỗi provider có:
 
 - tên và mô tả hiển thị;
 - command, ví dụ `codex-room lead`;
@@ -290,10 +294,12 @@ File này nói cho Paseo biết có bốn provider Codex tùy biến. Mỗi prov
 File còn giới hạn Paseo MCP injection cho:
 
 ```json
-["codex-supervisor", "codex-lead"]
+["codex-supervisor", "codex-lead", "codex-harness"]
 ```
 
-Lý do: Supervisor và Lead cần nhìn/điều phối workspace; Peer chỉ cần làm scope được giao; Review cần bề mặt công cụ nhỏ và độc lập hơn.
+Lý do: Supervisor và Lead cần nhìn/điều phối workspace; Harness cần tạo đúng
+ba Peer bằng Paseo; Peer chỉ cần làm scope được giao; Review cần bề mặt công cụ
+nhỏ và độc lập hơn.
 
 Một điểm dễ sai là model tồn tại ở **hai nơi**:
 
@@ -436,7 +442,7 @@ Session Lead đang chạy có thể vẫn giữ context cũ. Chỉ dẫn mới �
 
 ### Trường hợp C: giảm quyền từ `danger-full-access`
 
-Hiện cả bốn overlay và provider params đều yêu cầu `danger-full-access` với `approval_policy = "never"`. Đây là cấu hình quyền lực cao.
+Hiện cả năm overlay và provider params đều yêu cầu `danger-full-access` với `approval_policy = "never"`. Đây là cấu hình quyền lực cao.
 
 Muốn giảm quyền, phải xem cả:
 
@@ -483,7 +489,7 @@ Các biến này cho phép sinh runtime trong một vùng tạm, dùng config v�
 
 Runtime là output được sinh. Hãy sửa base `~/.codex/config.toml` nếu thay đổi áp dụng cho mọi role, hoặc sửa overlay nếu chỉ áp dụng cho một role.
 
-### “Paseo không thấy bốn provider”
+### “Paseo không thấy năm provider”
 
 Kiểm tra theo thứ tự:
 

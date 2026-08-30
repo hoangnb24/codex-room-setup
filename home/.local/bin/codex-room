@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-role="${1:?usage: codex-room <supervisor|lead|peer|review> [codex args...]}"
-shift
+usage="usage: codex-room <supervisor|lead|peer|review|harness> [codex args...] | codex-room --resolve-evidence-home <role>"
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 sync_bin="${CODEX_ROOM_SYNC_BIN:-${script_dir}/codex-room-sync}"
@@ -11,6 +10,37 @@ if [[ -n "${CODEX_ROOM_LAB_ROOT:-}" ]]; then
 else
   runtime_root="${CODEX_ROOM_RUNTIME_ROOT:-${HOME}/.codex-runtime}"
 fi
+
+if [[ "${1:-}" == "--resolve-evidence-home" ]]; then
+  [[ "$#" -eq 2 ]] || { echo "$usage" >&2; exit 2; }
+  evidence_role="$2"
+  case "$evidence_role" in
+    supervisor|lead|peer|review|harness) ;;
+    *) echo "unknown evidence role: $evidence_role" >&2; exit 2 ;;
+  esac
+  exec python3 - "$runtime_root" "$evidence_role" <<'PY'
+import pathlib
+import sys
+
+runtime_root = pathlib.Path(sys.argv[1]).expanduser()
+role = sys.argv[2]
+if not runtime_root.is_dir():
+    raise SystemExit(f"runtime root is missing or not a directory: {runtime_root}")
+canonical_root = runtime_root.resolve(strict=True)
+candidate = runtime_root / role
+if candidate.is_symlink():
+    raise SystemExit(f"evidence role directory must not be a symlink: {candidate}")
+if not candidate.is_dir():
+    raise SystemExit(f"evidence role directory is missing: {candidate}")
+canonical_candidate = candidate.resolve(strict=True)
+if canonical_candidate.parent != canonical_root or canonical_candidate.name != role:
+    raise SystemExit(f"evidence role directory is not a direct runtime child: {candidate}")
+print(canonical_candidate)
+PY
+fi
+
+role="${1:?$usage}"
+shift
 
 "${sync_bin}" "${role}"
 export CODEX_HOME="${runtime_root}/${role}"

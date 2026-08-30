@@ -23,7 +23,7 @@ PY
 }
 
 export_one "$HOME/.config/codex-room/model-instructions.md" "$REPO_ROOT/home/.config/codex-room/model-instructions.md"
-for role in supervisor lead peer review; do
+for role in supervisor lead peer review harness; do
   export_one "$HOME/.config/codex-room/overlays/$role.config.toml" "$REPO_ROOT/home/.config/codex-room/overlays/$role.config.toml"
 done
 for name in WORKSPACE_PROTOCOL.md ANTI_PATTERNS.md SUPERVISOR_NOTEBOOK.md; do
@@ -35,4 +35,3 @@ done
 export_one "$HOME/.paseo/config.json" "$REPO_ROOT/home/.paseo/config.json.template"
 
 log "EXPORT_COMPLETE"
-

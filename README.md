@@ -1,10 +1,10 @@
 # Codex Room Setup
 
-Reproducible configuration for a four-role Codex room running through a local Paseo fork:
+Reproducible configuration for a five-role Codex room running through a local Paseo fork:
 
 ```text
 Paseo provider
-  -> codex-room <supervisor|lead|peer|review>
+  -> codex-room <supervisor|lead|peer|review|harness>
   -> codex-room-sync
   -> isolated ~/.codex-runtime/<role>
   -> Codex app-server
@@ -47,7 +47,7 @@ cd codex-room-setup
 ./scripts/install                 # dry-run only
 ./scripts/install --apply         # backup and install
 ./scripts/install-paseo-fork      # clone/verify the fork and link its CLI
-./scripts/sync-all                # materialize four CODEX_HOME directories
+./scripts/sync-all                # materialize five CODEX_HOME directories
 ./scripts/verify                  # verify installed files and runtimes
 ```
 
@@ -79,6 +79,7 @@ That command updates the checkout, installs dependencies, builds and signs the l
 | Lead | `gpt-5.6-sol` | medium | yes |
 | Peer | `gpt-5.6-sol` | medium | no |
 | Review (OCR-assisted stable candidate) | `gpt-5.6-luna` | max | no |
+| Harness (Better Harness coordinator) | `gpt-5.6-sol` | medium | yes |
 
 Lead sends premise, architecture, and macro review to a read-only Peer. Lead
 uses Review only for a frozen, bounded candidate that needs OCR-assisted file or
@@ -86,6 +87,13 @@ rule selection. Lead does not run OCR. All role overlays currently request
 `danger-full-access` with `approval_policy = "never"`. Review additionally
 strips inherited MCP server tables. Read
 [docs/architecture.md](docs/architecture.md) before changing these boundaries.
+
+Harness coordinates one Better Harness report over one explicitly selected role
+home. Its plugins are private to `~/.codex-runtime/harness`; the other four
+roles continue to share `~/.codex/plugins`. Harness dispatches exactly three
+fresh read-only Peer seats through Paseo while native Codex agents remain off.
+See [docs/better-harness-role.md](docs/better-harness-role.md) for the explicit,
+profile-local plugin installation and evidence-scope procedure.
 
 ## Common operations
 

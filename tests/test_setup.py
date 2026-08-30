@@ -15,6 +15,8 @@ HOME_MIRROR = ROOT / "home"
 ROOM = HOME_MIRROR / ".config" / "codex-room"
 PASEO_TEMPLATE = HOME_MIRROR / ".paseo" / "config.json.template"
 SYNC = HOME_MIRROR / ".local" / "bin" / "codex-room-sync"
+LAUNCHER = HOME_MIRROR / ".local" / "bin" / "codex-room"
+SYNC_ALL = ROOT / "scripts" / "sync-all"
 SESSION_USAGE = ROOT / "scripts" / "session-usage"
 WORKFLOW_PILOT_REPORT = ROOT / "scripts" / "workflow-pilot-report"
 
@@ -29,11 +31,11 @@ class SetupShapeTests(unittest.TestCase):
         room_roles = sorted(name for name in providers if name.startswith("codex-"))
         self.assertEqual(
             room_roles,
-            ["codex-lead", "codex-peer", "codex-review", "codex-supervisor"],
+            ["codex-harness", "codex-lead", "codex-peer", "codex-review", "codex-supervisor"],
         )
         self.assertEqual(
             config["daemon"]["mcp"]["injectIntoProviders"],
-            ["codex-supervisor", "codex-lead"],
+            ["codex-supervisor", "codex-lead", "codex-harness"],
         )
         self.assertEqual(
             providers["codex-review"]["command"],
@@ -41,6 +43,13 @@ class SetupShapeTests(unittest.TestCase):
         )
         self.assertEqual(providers["codex-review"]["label"], "Codex Review (OCR-assisted)")
         self.assertIn("frozen bounded candidates", providers["codex-review"]["description"])
+        self.assertEqual(
+            providers["codex-harness"]["command"],
+            ["/tmp/operator/.local/bin/codex-room", "harness"],
+        )
+        self.assertIn("Better Harness", providers["codex-harness"]["description"])
+        self.assertNotIn("codex-peer", config["daemon"]["mcp"]["injectIntoProviders"])
+        self.assertNotIn("codex-review", config["daemon"]["mcp"]["injectIntoProviders"])
 
     def test_role_defaults_are_aligned(self) -> None:
         config = json.loads(PASEO_TEMPLATE.read_text().replace("@@HOME@@", "/tmp/operator"))
@@ -49,6 +58,7 @@ class SetupShapeTests(unittest.TestCase):
             "lead": ("gpt-5.6-sol", "medium"),
             "peer": ("gpt-5.6-sol", "medium"),
             "review": ("gpt-5.6-luna", "max"),
+            "harness": ("gpt-5.6-sol", "medium"),
         }
         for role, (model, effort) in expected.items():
             overlay_text = (ROOM / "overlays" / f"{role}.config.toml").read_text()
@@ -127,8 +137,25 @@ class SetupShapeTests(unittest.TestCase):
             )
             self.assertEqual(notebook.read_text(), "# Runtime learning\n")
             self.assertIn("PRESERVED  ~/.config/codex-room/workflow/SUPERVISOR_NOTEBOOK.md", second_install.stdout)
+            self.assertTrue(
+                (fake_home / ".config" / "codex-room" / "overlays" / "harness.config.toml").is_file()
+            )
             self.assertFalse((fake_home / ".codex").exists())
             self.assertFalse((fake_home / ".codex-runtime").exists())
+            paseo_link = fake_home / ".local" / "bin" / "paseo"
+            paseo_link.symlink_to(
+                fake_home / "projects" / "supervisors" / "paseo" / "packages" / "cli" / "bin" / "paseo"
+            )
+            subprocess.run(
+                [str(ROOT / "scripts" / "uninstall"), "--apply"],
+                check=True,
+                env=env,
+                capture_output=True,
+                text=True,
+            )
+            self.assertFalse(
+                (fake_home / ".config" / "codex-room" / "overlays" / "harness.config.toml").exists()
+            )
 
     def test_paseo_fork_installer_links_cli(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -168,6 +195,85 @@ class SetupShapeTests(unittest.TestCase):
             link = fake_home / ".local" / "bin" / "paseo"
             self.assertTrue(link.is_symlink())
             self.assertEqual(os.readlink(link), str(cli))
+
+    def test_sync_all_uses_the_common_generator_for_all_five_roles(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            fake_sync = root / "fake-sync"
+            sync_log = root / "roles.log"
+            fake_sync.write_text(
+                "#!/usr/bin/env python3\n"
+                "import os, sys\n"
+                "with open(os.environ['SYNC_LOG'], 'a') as stream:\n"
+                "    stream.write(sys.argv[1] + '\\n')\n"
+            )
+            fake_sync.chmod(0o755)
+            env = os.environ.copy()
+            env.update(
+                {
+                    "HOME": str(root / "home"),
+                    "CODEX_ROOM_SYNC_BIN": str(fake_sync),
+                    "SYNC_LOG": str(sync_log),
+                }
+            )
+
+            subprocess.run(
+                [str(SYNC_ALL)],
+                check=True,
+                env=env,
+                capture_output=True,
+                text=True,
+            )
+
+            self.assertEqual(
+                sync_log.read_text().splitlines(),
+                ["supervisor", "lead", "peer", "review", "harness"],
+            )
+
+    def test_launcher_resolves_only_a_direct_role_home_without_sync(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            runtime_root = Path(temporary) / "runtime"
+            lead_home = runtime_root / "lead"
+            lead_home.mkdir(parents=True)
+            env = os.environ.copy()
+            env.update(
+                {
+                    "CODEX_ROOM_RUNTIME_ROOT": str(runtime_root),
+                    "CODEX_ROOM_SYNC_BIN": str(Path(temporary) / "must-not-run"),
+                }
+            )
+
+            completed = subprocess.run(
+                [str(LAUNCHER), "--resolve-evidence-home", "lead"],
+                check=True,
+                env=env,
+                capture_output=True,
+                text=True,
+            )
+
+            self.assertEqual(completed.stdout.strip(), str(lead_home.resolve()))
+
+    def test_launcher_rejects_redirected_evidence_role_home(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            runtime_root = root / "runtime"
+            runtime_root.mkdir()
+            redirected = root / "redirected-lead"
+            redirected.mkdir()
+            (runtime_root / "lead").symlink_to(redirected, target_is_directory=True)
+            env = os.environ.copy()
+            env["CODEX_ROOM_RUNTIME_ROOT"] = str(runtime_root)
+
+            completed = subprocess.run(
+                [str(LAUNCHER), "--resolve-evidence-home", "lead"],
+                check=False,
+                env=env,
+                capture_output=True,
+                text=True,
+            )
+
+            self.assertNotEqual(completed.returncode, 0)
+            self.assertIn("must not be a symlink", completed.stderr)
 
     def test_session_usage_reports_requests_tools_tokens_and_cost(self) -> None:
         fixture = ROOT / "tests" / "fixtures" / "session-usage.jsonl"
@@ -313,6 +419,22 @@ class SetupShapeTests(unittest.TestCase):
         self.assertIn("Behavioral read-only", review_words)
         self.assertIn("Do not start a third loop automatically", review_words)
 
+    def test_harness_maps_exactly_three_read_only_better_harness_lanes(self) -> None:
+        harness = (ROOM / "overlays" / "harness.config.toml").read_text()
+        harness_words = " ".join(harness.split())
+        self.assertIn("exactly three fresh `codex-peer` seats", harness_words)
+        self.assertIn("Session Evidence", harness)
+        self.assertIn("Project Harness Evidence", harness)
+        self.assertIn("Agent Customize Evidence", harness)
+        self.assertIn("codex-room --resolve-evidence-home <role>", harness)
+        self.assertIn("--codex-home <resolved-absolute-home>", harness)
+        self.assertIn("$better-harness:better-harness", harness)
+        self.assertIn("inline/no-files", harness)
+        self.assertIn("Do not pass `--include-memories` or `--include-user-home` by default", harness_words)
+        self.assertIn("A Peer must not delegate", harness_words)
+        self.assertIn("use OCR", harness_words)
+        self.assertIn("edit project files", harness_words)
+
     def test_lead_review_is_pull_based(self) -> None:
         lead = (ROOM / "overlays" / "lead.config.toml").read_text()
         expected = """
@@ -356,7 +478,7 @@ class RuntimeGenerationTests(unittest.TestCase):
                 ]
             )
         )
-        for role in ("supervisor", "lead", "peer", "review"):
+        for role in ("supervisor", "lead", "peer", "review", "harness"):
             shutil.copyfile(
                 ROOM / "overlays" / f"{role}.config.toml",
                 self.canonical / f"{role}.config.toml",
@@ -372,11 +494,21 @@ class RuntimeGenerationTests(unittest.TestCase):
         self.temporary.cleanup()
 
     def run_sync(self, role: str) -> Path:
+        completed = self.run_sync_process(role)
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        return self.root / ".runtime" / role
+
+    def run_sync_process(self, role: str) -> subprocess.CompletedProcess[str]:
         env = os.environ.copy()
         env["CODEX_ROOM_LAB_ROOT"] = str(self.root)
         env["CODEX_ROOM_MODEL_CATALOG"] = str(ROOT / "tests" / "fixtures" / "model-catalog.json")
-        subprocess.run(["python3", str(SYNC), role], check=True, env=env, capture_output=True, text=True)
-        return self.root / ".runtime" / role
+        return subprocess.run(
+            ["python3", str(SYNC), role],
+            check=False,
+            env=env,
+            capture_output=True,
+            text=True,
+        )
 
     def test_all_roles_generate_isolated_configs(self) -> None:
         expected = {
@@ -384,6 +516,7 @@ class RuntimeGenerationTests(unittest.TestCase):
             "lead": ("gpt-5.6-sol", "medium"),
             "peer": ("gpt-5.6-sol", "medium"),
             "review": ("gpt-5.6-luna", "max"),
+            "harness": ("gpt-5.6-sol", "medium"),
         }
         for role, (model, effort) in expected.items():
             runtime = self.run_sync(role)
@@ -393,12 +526,23 @@ class RuntimeGenerationTests(unittest.TestCase):
             self.assertIn("multi_agent = false", config)
             self.assertIn("multi_agent_v2 = false", config)
             self.assertTrue((runtime / "skills").is_symlink())
+            if role == "harness":
+                self.assertTrue((runtime / "plugins").is_dir())
+                self.assertFalse((runtime / "plugins").is_symlink())
+                self.assertEqual((runtime / "plugins").stat().st_mode & 0o777, 0o700)
+            else:
+                self.assertTrue((runtime / "plugins").is_symlink())
+                self.assertEqual((runtime / "plugins").resolve(), (self.canonical / "plugins").resolve())
             self.assertFalse((runtime / "WORKSPACE_PROTOCOL.md").exists())
             catalog = json.loads((runtime / "model-catalog.no-native-agents.json").read_text())
             self.assertTrue(all(model["multi_agent_version"] is None for model in catalog["models"]))
 
     def test_review_strips_mcp_servers(self) -> None:
         runtime = self.run_sync("review")
+        self.assertNotIn("[mcp_servers.", (runtime / "config.toml").read_text())
+
+    def test_harness_strips_inherited_mcp_servers(self) -> None:
+        runtime = self.run_sync("harness")
         self.assertNotIn("[mcp_servers.", (runtime / "config.toml").read_text())
 
     def test_sync_removes_legacy_workspace_protocol_link(self) -> None:
@@ -416,6 +560,190 @@ class RuntimeGenerationTests(unittest.TestCase):
         runtime = self.run_sync("supervisor")
         self.assertIn("[mcp_servers.example]", (runtime / "config.toml").read_text())
         self.assertTrue((runtime / "SUPERVISOR_NOTEBOOK.md").is_file())
+
+    def test_harness_migrates_only_expected_canonical_plugins_symlink(self) -> None:
+        runtime = self.root / ".runtime" / "harness"
+        runtime.mkdir(parents=True)
+        (runtime / "plugins").symlink_to(self.canonical / "plugins", target_is_directory=True)
+
+        self.run_sync("harness")
+
+        self.assertTrue((runtime / "plugins").is_dir())
+        self.assertFalse((runtime / "plugins").is_symlink())
+
+    def test_harness_generation_failure_preserves_expected_plugins_symlink(self) -> None:
+        runtime = self.root / ".runtime" / "harness"
+        runtime.mkdir(parents=True)
+        plugins = runtime / "plugins"
+        plugins.symlink_to(self.canonical / "plugins", target_is_directory=True)
+        shutil.rmtree(self.canonical / "skills")
+
+        completed = self.run_sync_process("harness")
+
+        self.assertNotEqual(completed.returncode, 0)
+        self.assertIn("shared target does not exist", completed.stderr)
+        self.assertTrue(plugins.is_symlink())
+        self.assertEqual(plugins.resolve(), (self.canonical / "plugins").resolve())
+
+    def test_harness_config_write_failure_preserves_expected_plugins_symlink(self) -> None:
+        runtime = self.root / ".runtime" / "harness"
+        runtime.mkdir(parents=True)
+        plugins = runtime / "plugins"
+        plugins.symlink_to(self.canonical / "plugins", target_is_directory=True)
+        (runtime / "config.toml").mkdir()
+
+        completed = self.run_sync_process("harness")
+
+        self.assertNotEqual(completed.returncode, 0)
+        self.assertTrue((runtime / "model-catalog.no-native-agents.json").is_file())
+        self.assertTrue(plugins.is_symlink())
+        self.assertEqual(plugins.resolve(), (self.canonical / "plugins").resolve())
+
+    def test_harness_rejects_unexpected_plugin_paths(self) -> None:
+        for kind in ("unexpected-symlink", "file"):
+            with self.subTest(kind=kind):
+                runtime = self.root / ".runtime" / "harness"
+                if runtime.exists():
+                    shutil.rmtree(runtime)
+                runtime.mkdir(parents=True)
+                plugins = runtime / "plugins"
+                if kind == "unexpected-symlink":
+                    unexpected = self.root / "unexpected-plugins"
+                    unexpected.mkdir(exist_ok=True)
+                    plugins.symlink_to(unexpected, target_is_directory=True)
+                    expected_error = "refusing to replace unexpected runtime symlink"
+                else:
+                    plugins.write_text("not a directory\n")
+                    expected_error = "refusing to replace non-directory runtime path"
+
+                completed = self.run_sync_process("harness")
+
+                self.assertNotEqual(completed.returncode, 0)
+                self.assertIn(expected_error, completed.stderr)
+                if kind == "unexpected-symlink":
+                    self.assertTrue(plugins.is_symlink())
+                else:
+                    self.assertEqual(plugins.read_text(), "not a directory\n")
+
+    def test_harness_preserves_private_plugins_across_repeated_sync(self) -> None:
+        runtime = self.run_sync("harness")
+        marker = runtime / "plugins" / "installed-plugin.marker"
+        marker.write_text("preserve me\n")
+        (runtime / "plugins").chmod(0o755)
+
+        self.run_sync("harness")
+
+        self.assertEqual(marker.read_text(), "preserve me\n")
+        self.assertFalse((runtime / "plugins").is_symlink())
+        self.assertEqual((runtime / "plugins").stat().st_mode & 0o777, 0o700)
+
+    def test_harness_preserves_only_better_harness_registration(self) -> None:
+        runtime = self.run_sync("harness")
+        config = runtime / "config.toml"
+        config.write_text(
+            config.read_text().rstrip()
+            + """
+
+[marketplaces.better-harness]
+source_type = "git"
+source = "https://github.com/QoderAI/better-harness.git"
+ref = "audited-commit"
+
+[plugins."better-harness@better-harness"]
+enabled = true
+
+[marketplaces.unrelated]
+source_type = "git"
+source = "https://example.invalid/unrelated.git"
+
+[plugins."unrelated@unrelated"]
+enabled = true
+
+[mcp_servers.runtime-only]
+url = "https://example.invalid/runtime-mcp"
+"""
+        )
+
+        self.run_sync("harness")
+        first = config.read_text()
+        self.run_sync("harness")
+        repeated = config.read_text()
+
+        self.assertEqual(repeated, first)
+        self.assertEqual(first.count("[marketplaces.better-harness]"), 1)
+        self.assertEqual(first.count('[plugins."better-harness@better-harness"]'), 1)
+        self.assertIn('ref = "audited-commit"', first)
+        self.assertIn("enabled = true", first)
+        self.assertNotIn("marketplaces.unrelated", first)
+        self.assertNotIn('plugins."unrelated@unrelated"', first)
+        self.assertNotIn("mcp_servers.", first)
+        self.assertIn("[agents]\nenabled = false", first)
+        self.assertIn("multi_agent = false", first)
+        self.assertIn("multi_agent_v2 = false", first)
+        self.assertEqual((runtime / "plugins").stat().st_mode & 0o777, 0o700)
+
+    def test_harness_sync_does_not_synthesize_registration(self) -> None:
+        runtime = self.run_sync("harness")
+        config = (runtime / "config.toml").read_text()
+
+        self.assertNotIn("[marketplaces.better-harness]", config)
+        self.assertNotIn('[plugins."better-harness@better-harness"]', config)
+
+    def test_fresh_config_registration_takes_precedence_without_duplication(self) -> None:
+        canonical_config = self.canonical / "config.toml"
+        canonical_config.write_text(
+            canonical_config.read_text().rstrip()
+            + """
+
+[marketplaces.better-harness]
+source_type = "git"
+source = "https://example.invalid/canonical.git"
+
+[plugins."better-harness@better-harness"]
+enabled = false
+"""
+        )
+        runtime = self.root / ".runtime" / "harness"
+        runtime.mkdir(parents=True)
+        (runtime / "config.toml").write_text(
+            """[marketplaces.better-harness]
+source_type = "git"
+source = "https://example.invalid/stale.git"
+
+[plugins."better-harness@better-harness"]
+enabled = true
+"""
+        )
+
+        self.run_sync("harness")
+
+        generated = (runtime / "config.toml").read_text()
+        self.assertEqual(generated.count("[marketplaces.better-harness]"), 1)
+        self.assertEqual(generated.count('[plugins."better-harness@better-harness"]'), 1)
+        self.assertIn('source = "https://example.invalid/canonical.git"', generated)
+        self.assertNotIn("stale.git", generated)
+
+    def test_other_role_does_not_preserve_better_harness_registration(self) -> None:
+        runtime = self.run_sync("lead")
+        config = runtime / "config.toml"
+        config.write_text(
+            config.read_text().rstrip()
+            + """
+
+[marketplaces.better-harness]
+source_type = "git"
+source = "https://github.com/QoderAI/better-harness.git"
+
+[plugins."better-harness@better-harness"]
+enabled = true
+"""
+        )
+
+        self.run_sync("lead")
+
+        regenerated = config.read_text()
+        self.assertNotIn("[marketplaces.better-harness]", regenerated)
+        self.assertNotIn('[plugins."better-harness@better-harness"]', regenerated)
 
 
 if __name__ == "__main__":

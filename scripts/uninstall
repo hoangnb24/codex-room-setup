@@ -49,6 +49,7 @@ done <<'EOF'
 .config/codex-room/overlays/lead.config.toml|.config/codex-room/overlays/lead.config.toml
 .config/codex-room/overlays/peer.config.toml|.config/codex-room/overlays/peer.config.toml
 .config/codex-room/overlays/review.config.toml|.config/codex-room/overlays/review.config.toml
+.config/codex-room/overlays/harness.config.toml|.config/codex-room/overlays/harness.config.toml
 .config/codex-room/workflow/WORKSPACE_PROTOCOL.md|.config/codex-room/workflow/WORKSPACE_PROTOCOL.md
 .config/codex-room/workflow/ANTI_PATTERNS.md|.config/codex-room/workflow/ANTI_PATTERNS.md
 .config/codex-room/workflow/SUPERVISOR_NOTEBOOK.md|.config/codex-room/workflow/SUPERVISOR_NOTEBOOK.md
