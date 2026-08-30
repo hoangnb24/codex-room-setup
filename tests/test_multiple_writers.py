@@ -13,6 +13,14 @@ class MultipleWriterGuideTests(unittest.TestCase):
         cls.readme = (ROOT / "README.md").read_text().casefold()
         cls.pilot = (ROOT / "docs" / "workflow-pilot.md").read_text().casefold()
         cls.operations = (ROOT / "docs" / "operations.md").read_text().casefold()
+        protocol = (
+            ROOT / "home" / ".config" / "codex-room" / "workflow" / "WORKSPACE_PROTOCOL.md"
+        ).read_text()
+        lead_config = (
+            ROOT / "home" / ".config" / "codex-room" / "overlays" / "lead.config.toml"
+        ).read_text()
+        cls.protocol = " ".join(protocol.casefold().split())
+        cls.lead_config = " ".join(lead_config.casefold().split())
 
     def assert_signals(self, document: str, signals: tuple[str, ...]) -> None:
         for signal in signals:
@@ -71,7 +79,10 @@ class MultipleWriterGuideTests(unittest.TestCase):
             (
                 "git rev-parse head",
                 "shasum -a 256",
-                "git worktree add",
+                "create_workspace",
+                'isolation: "worktree"',
+                "returned `workspaceid` and `cwd`",
+                "exact `base` commit",
                 "diff-tree --no-commit-id --name-only",
                 'git cherry-pick "$candidate_a"',
                 'git cherry-pick "$candidate_b"',
@@ -79,6 +90,40 @@ class MultipleWriterGuideTests(unittest.TestCase):
                 "two comparable misses",
             ),
         )
+        self.assertNotIn("git worktree add", self.operations)
+
+    def test_authoritative_sources_preserve_multiple_writer_guards(self) -> None:
+        sources = {
+            "workspace protocol": (
+                self.protocol,
+                (
+                    "positive opportunity gate",
+                    "unknown or incomplete evidence means `serial`",
+                    "no repository may have more than two concurrent writers",
+                    "same exact base commit",
+                    "one isolated worktree per writer",
+                    "`candidate_identity` is an immutable commit",
+                    "current accepted integration tip",
+                    "one at a time",
+                ),
+            ),
+            "lead config": (
+                self.lead_config,
+                (
+                    "positive opportunity gate",
+                    "unknown or incomplete evidence means `serial`",
+                    "never run more than two writers concurrently in one repository",
+                    "same exact base commit",
+                    "separate isolated worktree",
+                    "immutable candidate commit",
+                    "current accepted integration tip",
+                    "one at a time",
+                ),
+            ),
+        }
+        for source, (document, signals) in sources.items():
+            with self.subTest(source=source):
+                self.assert_signals(document, signals)
 
 
 if __name__ == "__main__":

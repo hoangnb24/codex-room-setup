@@ -45,14 +45,18 @@ record rather than relying on mutable branch names.
    the work shares an integration surface, record `SERIAL`. Never run more than
    two writers concurrently in one repository.
 
-3. Create separate branches and worktrees from the same exact `BASE`. Confirm
-   both worktrees report that commit before dispatch.
+3. As Lead, invoke Paseo's `create_workspace` MCP tool twice so Paseo registers
+   and manages both isolated worktrees. For each request use
+   `isolation: "worktree"`, `mode: "branch-off"`, the source checkout as
+   `path`, the frontier branch as `branchName`, and the exact commit `BASE` as
+   `baseBranch`; give each request a distinct `worktreeSlug`. Record the
+   returned `workspaceId` and `cwd`, and use that workspace ID when placing its
+   writer. Before dispatch, independently confirm both returned worktree paths
+   report the exact `BASE` commit.
 
    ```bash
-   git worktree add -b "$FRONTIER_A" /absolute/path/frontier-a "$BASE"
-   git worktree add -b "$FRONTIER_B" /absolute/path/frontier-b "$BASE"
-   git -C /absolute/path/frontier-a rev-parse HEAD
-   git -C /absolute/path/frontier-b rev-parse HEAD
+   git -C /absolute/path/from/frontier-a-workspace rev-parse HEAD
+   git -C /absolute/path/from/frontier-b-workspace rev-parse HEAD
    ```
 
 4. Dispatch at most two `FRONTIER_BRIEF v1` messages. Put the exact base,
