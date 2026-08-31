@@ -221,6 +221,115 @@ class SetupShapeTests(unittest.TestCase):
             self.assertNotEqual(failed.returncode, 0)
             self.assertFalse(wrong_target.exists())
 
+    def test_paseo_preflight_validates_existing_target_without_mutation(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary); home = root / "home"
+            remote, first, second = self.make_paseo_remote(root)
+            npm = self.fake_npm(root)
+
+            def clone(name: str, commit: str = first) -> tuple[Path, dict[str, str]]:
+                target = root / name
+                subprocess.run(["git", "clone", "-q", str(remote), str(target)], check=True)
+                subprocess.run(["git", "-C", str(target), "checkout", "-q", "-B", "main", commit], check=True)
+                subprocess.run(["git", "-C", str(target), "remote", "add", "upstream", str(remote) + "-upstream"], check=True)
+                subprocess.run(["git", "-C", str(target), "config", "branch.main.remote", "origin"], check=True)
+                return target, self.paseo_env(home, remote, target, second, npm)
+
+            def snapshot(target: Path):
+                custom_hook = target / ".git/hooks/pre-push"
+                return (
+                    subprocess.run(["git", "-C", str(target), "rev-parse", "HEAD"], check=True, capture_output=True, text=True).stdout,
+                    subprocess.run(["git", "-C", str(target), "branch", "--show-current"], check=True, capture_output=True, text=True).stdout,
+                    subprocess.run(["git", "-C", str(target), "remote", "-v"], check=True, capture_output=True, text=True).stdout,
+                    (target / ".git/config").read_bytes(),
+                    (target / "package.json").read_bytes(),
+                    subprocess.run(["git", "-C", str(target), "status", "--porcelain"], check=True, capture_output=True, text=True).stdout,
+                    custom_hook.read_bytes() if custom_hook.exists() else b"",
+                )
+
+            fresh = root / "not-created"
+            subprocess.run(
+                [str(ROOT / "scripts/install-paseo-fork"), "--preflight"],
+                check=True, env=self.paseo_env(home, remote, fresh, second, npm),
+                capture_output=True, text=True,
+            )
+            self.assertFalse(fresh.exists())
+
+            ancestor, ancestor_env = clone("ancestor")
+            ancestor_before = snapshot(ancestor)
+            subprocess.run([str(ROOT / "scripts/install-paseo-fork"), "--preflight"], check=True, env=ancestor_env, capture_output=True, text=True)
+            self.assertEqual(snapshot(ancestor), ancestor_before)
+
+            cases = [
+                ("dirty", lambda target: (target / "package.json").write_text("dirty\n")),
+                ("unknown-remotes", lambda target: subprocess.run(["git", "-C", str(target), "remote", "set-url", "origin", str(root / "custom.git")], check=True)),
+                ("unknown-tracking", lambda target: subprocess.run(["git", "-C", str(target), "config", "branch.main.remote", "upstream"], check=True)),
+                ("detached", lambda target: subprocess.run(["git", "-C", str(target), "checkout", "-q", "--detach", first], check=True)),
+                ("custom-hook", lambda target: (target / ".git/hooks/pre-push").write_text("#!/bin/sh\necho custom\n")),
+                ("core-hooks", lambda target: subprocess.run(["git", "-C", str(target), "config", "core.hooksPath", ".custom-hooks"], check=True)),
+            ]
+            for name, mutate in cases:
+                with self.subTest(name=name):
+                    target, env = clone(name)
+                    mutate(target)
+                    before = snapshot(target)
+                    completed = subprocess.run([str(ROOT / "scripts/install-paseo-fork"), "--preflight"], env=env, capture_output=True, text=True)
+                    self.assertNotEqual(completed.returncode, 0)
+                    self.assertEqual(snapshot(target), before)
+
+            for name, base in (("divergent", first), ("ahead", second)):
+                with self.subTest(name=name):
+                    target, env = clone(name, base)
+                    (target / "local.txt").write_text(name + "\n")
+                    subprocess.run(["git", "-C", str(target), "add", "."], check=True)
+                    subprocess.run(["git", "-C", str(target), "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "-qm", name], check=True)
+                    before = snapshot(target)
+                    completed = subprocess.run([str(ROOT / "scripts/install-paseo-fork"), "--preflight"], env=env, capture_output=True, text=True)
+                    self.assertNotEqual(completed.returncode, 0)
+                    self.assertEqual(snapshot(target), before)
+
+            invalid = root / "invalid-target"
+            invalid.write_text("operator file\n")
+            completed = subprocess.run(
+                [str(ROOT / "scripts/install-paseo-fork"), "--preflight"],
+                env=self.paseo_env(home, remote, invalid, second, npm),
+                capture_output=True, text=True,
+            )
+            self.assertNotEqual(completed.returncode, 0)
+            self.assertEqual(invalid.read_text(), "operator file\n")
+
+            real_target, _ = clone("real-target")
+            linked_target = root / "linked-target"
+            linked_target.symlink_to(real_target, target_is_directory=True)
+            real_before = snapshot(real_target)
+            completed = subprocess.run(
+                [str(ROOT / "scripts/install-paseo-fork"), "--preflight"],
+                env=self.paseo_env(home, remote, linked_target, second, npm),
+                capture_output=True, text=True,
+            )
+            self.assertNotEqual(completed.returncode, 0)
+            self.assertTrue(linked_target.is_symlink())
+            self.assertEqual(snapshot(real_target), real_before)
+
+    def test_paseo_cli_backup_preserves_broken_symlink(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary); home = root / "home"; target = root / "checkout"
+            remote, _, second = self.make_paseo_remote(root)
+            npm = self.fake_npm(root)
+            cli_link = root / "bin/paseo"
+            cli_link.parent.mkdir()
+            cli_link.symlink_to("missing-operator-target")
+            env = self.paseo_env(home, remote, target, second, npm)
+            env["PASEO_CLI_LINK"] = str(cli_link)
+            subprocess.run([str(ROOT / "scripts/install-paseo-fork")], check=True, env=env, capture_output=True, text=True)
+            self.assertTrue(cli_link.is_symlink())
+            self.assertEqual(os.readlink(cli_link), str(target / "packages/cli/bin/paseo"))
+            backup_dirs = list((home / ".codex-room-backups").glob("paseo-cli-*"))
+            self.assertEqual(len(backup_dirs), 1)
+            backup = backup_dirs[0] / "paseo"
+            self.assertTrue(backup.is_symlink())
+            self.assertEqual(os.readlink(backup), "missing-operator-target")
+
     def test_paseo_existing_transitions_and_refusals_are_fail_safe(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary); home = root / "home"
@@ -384,6 +493,18 @@ class SetupShapeTests(unittest.TestCase):
             self.assertIn("npm install --global @alibaba-group/open-code-review@1.11.0", actions)
             self.assertLess(actions.index("component --preflight"), actions.index("npm install --global @alibaba-group/open-code-review@1.11.0"))
             self.assertNotIn("verify", actions)
+
+            rejecting = self.executable(
+                bin_dir / "rejecting-paseo",
+                "#!/bin/sh\nprintf 'rejecting %s\\n' \"$*\" >> \"$ACTION_LOG\"\n"
+                "[ \"${1:-}\" != --preflight ] || exit 41\n"
+            )
+            log.unlink()
+            env["PASEO_INSTALL_BIN"] = str(rejecting)
+            failed_preflight = subprocess.run([str(ROOT / "scripts/bootstrap"), "--apply"], env=env, capture_output=True, text=True)
+            self.assertNotEqual(failed_preflight.returncode, 0)
+            self.assertEqual(log.read_text().splitlines(), ["rejecting --preflight"])
+            self.assertEqual((harness / "state").read_text(), "prior\n")
 
     def test_installed_verify_honors_custom_paseo_repo_and_marketplace_root(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

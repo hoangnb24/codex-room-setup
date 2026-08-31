@@ -69,10 +69,54 @@ stage_exact() {
   [[ -z "$(git -C "$destination" status --porcelain --untracked-files=no)" ]] || die "Paseo lifecycle changed tracked files"
 }
 
+stage_history() {
+  local destination="$1"
+  git init -q "$destination"
+  git -C "$destination" remote add origin "$fork_url"
+  git -C "$destination" fetch --quiet --no-tags origin "$verified_commit"
+  [[ "$(git -C "$destination" rev-parse FETCH_HEAD)" == "$verified_commit" ]] || die "fetched Paseo object does not match audited commit"
+}
+
+validate_existing_target() {
+  local repo="$1" history_repo="$2" actual_branch origin upstream legacy
+  local remote_names tracking_remote tracking_merge fetched_existing
+
+  [[ -d "$repo" && ! -L "$repo" && -d "$repo/.git" && ! -L "$repo/.git" ]] || die "target exists but is not a direct Git checkout: $repo"
+  actual_branch=$(git -C "$repo" branch --show-current)
+  [[ "$actual_branch" == "$branch" ]] || die "expected Paseo branch $branch; found ${actual_branch:-detached HEAD}"
+  [[ -z "$(GIT_OPTIONAL_LOCKS=0 git -C "$repo" status --porcelain --untracked-files=no)" ]] || die "Paseo tracked files or index are dirty"
+  check_hooks "$repo"
+
+  origin=$(git -C "$repo" remote get-url origin 2>/dev/null || true)
+  upstream=$(git -C "$repo" remote get-url upstream 2>/dev/null || true)
+  legacy=$(git -C "$repo" remote get-url hoangnb24 2>/dev/null || true)
+  remote_names=$(git -C "$repo" remote | LC_ALL=C sort | tr '\n' ' ')
+  tracking_remote=$(git -C "$repo" config --get "branch.$branch.remote" 2>/dev/null || true)
+  tracking_merge=$(git -C "$repo" config --get "branch.$branch.merge" 2>/dev/null || true)
+  if [[ "$remote_names" == "origin upstream " && "$origin" == "$fork_url" && "$upstream" == "$upstream_url" && -z "$legacy" && "$tracking_remote" == origin && "$tracking_merge" == "refs/heads/$branch" ]]; then
+    remote_mode=normalized
+  elif [[ "$remote_names" == "hoangnb24 origin " && "$origin" == "$upstream_url" && -z "$upstream" && "$legacy" == "$fork_url" && "$tracking_remote" == origin && "$tracking_merge" == "refs/heads/$branch" ]]; then
+    remote_mode=legacy
+  else
+    die "unknown Paseo remote topology; expected origin=fork/upstream=public (or exact legacy origin=public/hoangnb24=fork)"
+  fi
+
+  old_commit=$(git -C "$repo" rev-parse HEAD)
+  if [[ "$old_commit" != "$verified_commit" ]]; then
+    git -C "$history_repo" fetch --quiet --no-tags "$repo" "$old_commit"
+    fetched_existing=$(git -C "$history_repo" rev-parse FETCH_HEAD)
+    [[ "$fetched_existing" == "$old_commit" ]] || die "could not inspect existing Paseo HEAD without mutation"
+    git -C "$history_repo" merge-base --is-ancestor "$old_commit" "$verified_commit" || die "Paseo checkout is ahead or divergent from audited commit"
+  fi
+}
+
 if [[ "$preflight" == true ]]; then
   preflight_root=$(mktemp -d "${TMPDIR:-/tmp}/paseo-preflight.XXXXXX")
   trap 'rm -rf "$preflight_root"' EXIT
   stage_exact "$preflight_root/checkout"
+  if [[ -e "$target" || -L "$target" ]]; then
+    validate_existing_target "$target" "$preflight_root/checkout"
+  fi
   log "PASEO_PREFLIGHT_OK"
   exit 0
 fi
@@ -85,12 +129,12 @@ publish_cli_link() {
     if [[ -L "$cli_link" && "$(readlink "$cli_link")" == "$cli_target" ]]; then return; fi
     backup_root="$HOME/.codex-room-backups/paseo-cli-$(date -u +%Y%m%dT%H%M%SZ)"
     mkdir -p "$backup_root"
-    cp -p "$cli_link" "$backup_root/paseo"
+    cp -Pp "$cli_link" "$backup_root/paseo"
   fi
   ln -sfn "$cli_target" "$cli_link"
 }
 
-if [[ ! -e "$target" ]]; then
+if [[ ! -e "$target" && ! -L "$target" ]]; then
   mkdir -p "$(dirname "$target")"
   stage_root=$(mktemp -d "$(dirname "$target")/.paseo-stage.XXXXXX")
   trap 'rm -rf "$stage_root"' EXIT
@@ -101,29 +145,14 @@ if [[ ! -e "$target" ]]; then
   exit 0
 fi
 
-[[ -d "$target/.git" ]] || die "target exists but is not a Git checkout: $target"
-actual_branch=$(git -C "$target" branch --show-current)
-[[ "$actual_branch" == "$branch" ]] || die "expected Paseo branch $branch; found ${actual_branch:-detached HEAD}"
-[[ -z "$(git -C "$target" status --porcelain --untracked-files=no)" ]] || die "Paseo tracked files or index are dirty"
-check_hooks "$target"
-origin=$(git -C "$target" remote get-url origin 2>/dev/null || true)
-upstream=$(git -C "$target" remote get-url upstream 2>/dev/null || true)
-legacy=$(git -C "$target" remote get-url hoangnb24 2>/dev/null || true)
-remote_names=$(git -C "$target" remote | LC_ALL=C sort | tr '\n' ' ')
-tracking_remote=$(git -C "$target" config --get "branch.$branch.remote" 2>/dev/null || true)
-tracking_merge=$(git -C "$target" config --get "branch.$branch.merge" 2>/dev/null || true)
-if [[ "$remote_names" == "origin upstream " && "$origin" == "$fork_url" && "$upstream" == "$upstream_url" && -z "$legacy" && "$tracking_remote" == origin && "$tracking_merge" == "refs/heads/$branch" ]]; then
-  remote_mode=normalized
-elif [[ "$remote_names" == "hoangnb24 origin " && "$origin" == "$upstream_url" && -z "$upstream" && "$legacy" == "$fork_url" && "$tracking_remote" == origin && "$tracking_merge" == "refs/heads/$branch" ]]; then
-  remote_mode=legacy
-else
-  die "unknown Paseo remote topology; expected origin=fork/upstream=public (or exact legacy origin=public/hoangnb24=fork)"
-fi
+validation_root=$(mktemp -d "${TMPDIR:-/tmp}/paseo-existing-validation.XXXXXX")
+trap 'rm -rf "$validation_root"' EXIT
+stage_history "$validation_root/history"
+validate_existing_target "$target" "$validation_root/history"
 git -C "$target" fetch --quiet --no-tags "$fork_url" "$verified_commit"
 [[ "$(git -C "$target" rev-parse FETCH_HEAD)" == "$verified_commit" ]] || die "fetched Paseo object does not match audited commit"
-old_commit=$(git -C "$target" rev-parse HEAD)
+[[ "$(git -C "$target" rev-parse HEAD)" == "$old_commit" ]] || die "Paseo HEAD changed after validation; retry"
 if [[ "$old_commit" != "$verified_commit" ]]; then
-  git -C "$target" merge-base --is-ancestor "$old_commit" "$verified_commit" || die "Paseo checkout is ahead or divergent from audited commit"
   git -C "$target" update-ref "refs/heads/$branch" "$verified_commit" "$old_commit"
   if ! git -C "$target" restore --source="$verified_commit" --staged --worktree -- .; then
     git -C "$target" update-ref "refs/heads/$branch" "$old_commit" "$verified_commit"

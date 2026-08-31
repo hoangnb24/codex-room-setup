@@ -113,4 +113,10 @@ The installer does not restart the daemon because an active restart can interrup
 
 ## Update the local fork
 
-Run `paseo-local-update` only when no important agent turn or Desktop operation is active. It pulls with rebase, builds, replaces the app and restarts the daemon.
+Run `paseo-local-update` only when no important agent turn or Desktop operation
+is active. It verifies the audited owner-fork branch ref, requires normalized
+remotes/tracking plus a clean tracked/index state, and permits only an exact-pin
+no-op or clean fast-forward to that immutable commit. It refuses detached,
+dirty, ahead/divergent, custom-topology, custom-hook, and lock-integrity states;
+then it runs `npm ci`, builds, replaces the app, and restarts the daemon. It
+never pulls, rebases, resets, or merges automatically.
