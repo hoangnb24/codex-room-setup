@@ -1,63 +1,145 @@
 #!/usr/bin/env bash
 set -euo pipefail
-
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/common.sh"
 
-require_command git
-
-fork_url="${PASEO_FORK_URL:-git@github.com:hoangnb24/paseo.git}"
-upstream_url="${PASEO_UPSTREAM_URL:-git@github.com:getpaseo/paseo.git}"
+preflight=false
+[[ "${1:-}" == "--preflight" ]] && preflight=true
+[[ "$#" -le 1 ]] || die "Usage: scripts/install-paseo-fork [--preflight]"
+fork_url="${PASEO_FORK_URL:-$(awk -F'"' '/^fork = / {print $2; exit}' "$REPO_ROOT/paseo/source.toml")}"
+upstream_url="${PASEO_UPSTREAM_URL:-$(awk -F'"' '/^upstream = / {print $2; exit}' "$REPO_ROOT/paseo/source.toml")}"
 target="${PASEO_REPO_DIR:-$HOME/projects/supervisors/paseo}"
-branch="${PASEO_BRANCH:-main}"
+branch="${PASEO_BRANCH:-$(awk -F'"' '/^branch = / {print $2; exit}' "$REPO_ROOT/paseo/source.toml")}"
+verified_commit="${PASEO_VERIFIED_COMMIT:-$(awk -F'"' '/^verified_commit = / {print $2; exit}' "$REPO_ROOT/paseo/source.toml")}"
 cli_entrypoint="${PASEO_CLI_ENTRYPOINT:-packages/cli/bin/paseo}"
 cli_link="${PASEO_CLI_LINK:-$HOME/.local/bin/paseo}"
+npm_bin="${PASEO_NPM_BIN:-npm}"
+require_command git
+require_command "$npm_bin"
+[[ "$verified_commit" =~ ^[0-9a-f]{40}$ ]] || die "invalid audited Paseo commit: $verified_commit"
+remote_head=$(git ls-remote "$fork_url" "refs/heads/$branch" | awk 'NR == 1 {print $1}')
+[[ "$remote_head" == "$verified_commit" ]] || die "fork $branch is not the audited commit (expected $verified_commit, found ${remote_head:-missing})"
 
-if [[ -e "$target" && ! -d "$target/.git" ]]; then
-  die "target exists but is not a Git checkout: $target"
-fi
+check_hooks() {
+  local repo="$1" hook
+  [[ -z "$(git -C "$repo" config --get core.hooksPath 2>/dev/null || true)" ]] || die "custom core.hooksPath would be affected by Paseo prepare"
+  [[ -d "$repo/.git/hooks" ]] || return 0
+  for hook in "$repo"/.git/hooks/*; do
+    [[ -f "$hook" && "$hook" != *.sample ]] || continue
+    grep -Eqi 'lefthook' "$hook" || die "custom Git hook would be overwritten by Paseo prepare: $hook"
+  done
+}
 
-if [[ ! -d "$target/.git" ]]; then
-  mkdir -p "$(dirname "$target")"
-  log "CLONE  $fork_url -> $target"
-  git clone --branch "$branch" "$fork_url" "$target"
-else
-  log "FOUND  $target"
-fi
-
-current_fork=$(git -C "$target" remote get-url hoangnb24 2>/dev/null || true)
-if [[ -z "$current_fork" ]]; then
-  git -C "$target" remote add hoangnb24 "$fork_url"
-elif [[ "$current_fork" != "$fork_url" ]]; then
-  warn "hoangnb24 remote differs: $current_fork"
-fi
-
-current_upstream=$(git -C "$target" remote get-url origin 2>/dev/null || true)
-if [[ -z "$current_upstream" ]]; then
-  git -C "$target" remote add origin "$upstream_url"
-elif [[ "$current_upstream" != "$upstream_url" ]]; then
-  warn "origin remote differs: $current_upstream"
-fi
-
-cli_target="$target/$cli_entrypoint"
-[[ -f "$cli_target" ]] || die "Paseo CLI entrypoint is missing: $cli_target"
-
-if [[ -L "$cli_link" && "$(readlink "$cli_link")" == "$cli_target" ]]; then
-  log "UNCHANGED  $cli_link -> $cli_target"
-else
-  if [[ -e "$cli_link" || -L "$cli_link" ]]; then
-    timestamp=$(date -u +%Y%m%dT%H%M%SZ)
-    backup="$HOME/.codex-room-backups/paseo-cli-${timestamp}"
-    mkdir -p "$backup"
-    cp -Pp "$cli_link" "$backup/paseo"
-    log "BACKUP  $cli_link -> $backup/paseo"
-    rm -f "$cli_link"
+npm_ci_checked() {
+  local repo="$1" before after hook lock_backup
+  [[ -f "$repo/package-lock.json" ]] || die "Paseo package-lock.json is missing"
+  check_hooks "$repo"
+  before=$(sha256_file "$repo/package-lock.json")
+  lock_backup=$(mktemp "${TMPDIR:-/tmp}/paseo-lock.XXXXXX")
+  cp -p "$repo/package-lock.json" "$lock_backup"
+  if ! (cd "$repo" && "$npm_bin" ci); then
+    cp -p "$lock_backup" "$repo/package-lock.json"
+    rm -f "$lock_backup"
+    die "npm ci failed"
   fi
-  mkdir -p "$(dirname "$cli_link")"
-  ln -s "$cli_target" "$cli_link"
-  log "LINK  $cli_link -> $cli_target"
+  after=$(sha256_file "$repo/package-lock.json")
+  if [[ "$before" != "$after" ]]; then
+    cp -p "$lock_backup" "$repo/package-lock.json"
+    rm -f "$lock_backup"
+    die "npm ci changed package-lock.json (restored original)"
+  fi
+  rm -f "$lock_backup"
+  for hook in "$repo"/.git/hooks/*; do
+    [[ -f "$hook" && "$hook" != *.sample ]] || continue
+    grep -Eqi 'lefthook' "$hook" || die "npm ci left a non-lefthook Git hook: $hook"
+  done
+}
+
+stage_exact() {
+  local destination="$1"
+  git init -q "$destination"
+  git -C "$destination" remote add origin "$fork_url"
+  git -C "$destination" remote add upstream "$upstream_url"
+  git -C "$destination" fetch --quiet --no-tags origin "$verified_commit"
+  [[ "$(git -C "$destination" rev-parse FETCH_HEAD)" == "$verified_commit" ]] || die "fetched Paseo object does not match audited commit"
+  git -C "$destination" checkout -q -b "$branch" "$verified_commit"
+  git -C "$destination" config "branch.$branch.remote" origin
+  git -C "$destination" config "branch.$branch.merge" "refs/heads/$branch"
+  npm_ci_checked "$destination"
+  [[ -f "$destination/$cli_entrypoint" ]] || die "Paseo CLI entrypoint is missing from audited commit"
+  [[ -z "$(git -C "$destination" status --porcelain --untracked-files=no)" ]] || die "Paseo lifecycle changed tracked files"
+}
+
+if [[ "$preflight" == true ]]; then
+  preflight_root=$(mktemp -d "${TMPDIR:-/tmp}/paseo-preflight.XXXXXX")
+  trap 'rm -rf "$preflight_root"' EXIT
+  stage_exact "$preflight_root/checkout"
+  log "PASEO_PREFLIGHT_OK"
+  exit 0
 fi
 
+publish_cli_link() {
+  local cli_target="$target/$cli_entrypoint" backup_root
+  [[ -f "$cli_target" ]] || die "Paseo CLI entrypoint is missing: $cli_target"
+  mkdir -p "$(dirname "$cli_link")"
+  if [[ -e "$cli_link" || -L "$cli_link" ]]; then
+    if [[ -L "$cli_link" && "$(readlink "$cli_link")" == "$cli_target" ]]; then return; fi
+    backup_root="$HOME/.codex-room-backups/paseo-cli-$(date -u +%Y%m%dT%H%M%SZ)"
+    mkdir -p "$backup_root"
+    cp -p "$cli_link" "$backup_root/paseo"
+  fi
+  ln -sfn "$cli_target" "$cli_link"
+}
+
+if [[ ! -e "$target" ]]; then
+  mkdir -p "$(dirname "$target")"
+  stage_root=$(mktemp -d "$(dirname "$target")/.paseo-stage.XXXXXX")
+  trap 'rm -rf "$stage_root"' EXIT
+  stage_exact "$stage_root/checkout"
+  mv "$stage_root/checkout" "$target"
+  publish_cli_link
+  log "PASEO_FORK_READY"
+  exit 0
+fi
+
+[[ -d "$target/.git" ]] || die "target exists but is not a Git checkout: $target"
+actual_branch=$(git -C "$target" branch --show-current)
+[[ "$actual_branch" == "$branch" ]] || die "expected Paseo branch $branch; found ${actual_branch:-detached HEAD}"
+[[ -z "$(git -C "$target" status --porcelain --untracked-files=no)" ]] || die "Paseo tracked files or index are dirty"
+check_hooks "$target"
+origin=$(git -C "$target" remote get-url origin 2>/dev/null || true)
+upstream=$(git -C "$target" remote get-url upstream 2>/dev/null || true)
+legacy=$(git -C "$target" remote get-url hoangnb24 2>/dev/null || true)
+remote_names=$(git -C "$target" remote | LC_ALL=C sort | tr '\n' ' ')
+tracking_remote=$(git -C "$target" config --get "branch.$branch.remote" 2>/dev/null || true)
+tracking_merge=$(git -C "$target" config --get "branch.$branch.merge" 2>/dev/null || true)
+if [[ "$remote_names" == "origin upstream " && "$origin" == "$fork_url" && "$upstream" == "$upstream_url" && -z "$legacy" && "$tracking_remote" == origin && "$tracking_merge" == "refs/heads/$branch" ]]; then
+  remote_mode=normalized
+elif [[ "$remote_names" == "hoangnb24 origin " && "$origin" == "$upstream_url" && -z "$upstream" && "$legacy" == "$fork_url" && "$tracking_remote" == origin && "$tracking_merge" == "refs/heads/$branch" ]]; then
+  remote_mode=legacy
+else
+  die "unknown Paseo remote topology; expected origin=fork/upstream=public (or exact legacy origin=public/hoangnb24=fork)"
+fi
+git -C "$target" fetch --quiet --no-tags "$fork_url" "$verified_commit"
+[[ "$(git -C "$target" rev-parse FETCH_HEAD)" == "$verified_commit" ]] || die "fetched Paseo object does not match audited commit"
+old_commit=$(git -C "$target" rev-parse HEAD)
+if [[ "$old_commit" != "$verified_commit" ]]; then
+  git -C "$target" merge-base --is-ancestor "$old_commit" "$verified_commit" || die "Paseo checkout is ahead or divergent from audited commit"
+  git -C "$target" update-ref "refs/heads/$branch" "$verified_commit" "$old_commit"
+  if ! git -C "$target" restore --source="$verified_commit" --staged --worktree -- .; then
+    git -C "$target" update-ref "refs/heads/$branch" "$old_commit" "$verified_commit"
+    git -C "$target" restore --source="$old_commit" --staged --worktree -- .
+    die "could not materialize audited Paseo fast-forward"
+  fi
+fi
+if [[ "$remote_mode" == legacy ]]; then
+  git -C "$target" remote rename origin upstream
+  git -C "$target" remote rename hoangnb24 origin
+fi
+git -C "$target" config "branch.$branch.remote" origin
+git -C "$target" config "branch.$branch.merge" "refs/heads/$branch"
+npm_ci_checked "$target"
+[[ -z "$(git -C "$target" status --porcelain --untracked-files=no)" ]] || die "Paseo lifecycle changed tracked files"
+publish_cli_link
 log "PASEO_FORK_READY"
 log "path=$target"
-log "branch=$(git -C "$target" branch --show-current)"
 log "commit=$(git -C "$target" rev-parse HEAD)"

@@ -22,6 +22,52 @@ WORKFLOW_PILOT_REPORT = ROOT / "scripts" / "workflow-pilot-report"
 
 
 class SetupShapeTests(unittest.TestCase):
+    def make_paseo_remote(self, root: Path) -> tuple[Path, str, str]:
+        work = root / "paseo-work"
+        remote = root / "paseo.git"
+        subprocess.run(["git", "init", "-q", "-b", "main", str(work)], check=True)
+        (work / "packages" / "cli" / "bin").mkdir(parents=True)
+        (work / "packages" / "cli" / "bin" / "paseo").write_text("#!/usr/bin/env node\n")
+        (work / "package.json").write_text('{"scripts":{"prepare":"true"}}\n')
+        (work / "package-lock.json").write_text('{"lockfileVersion":3}\n')
+        subprocess.run(["git", "-C", str(work), "add", "."], check=True)
+        subprocess.run(["git", "-C", str(work), "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "-qm", "one"], check=True)
+        first = subprocess.run(["git", "-C", str(work), "rev-parse", "HEAD"], check=True, capture_output=True, text=True).stdout.strip()
+        (work / "version.txt").write_text("two\n")
+        subprocess.run(["git", "-C", str(work), "add", "."], check=True)
+        subprocess.run(["git", "-C", str(work), "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "-qm", "two"], check=True)
+        second = subprocess.run(["git", "-C", str(work), "rev-parse", "HEAD"], check=True, capture_output=True, text=True).stdout.strip()
+        subprocess.run(["git", "clone", "-q", "--bare", str(work), str(remote)], check=True)
+        return remote, first, second
+
+    def fake_npm(self, root: Path, *, change_lock: bool = False) -> Path:
+        root.mkdir(parents=True, exist_ok=True)
+        npm = root / "npm"
+        npm.write_text(
+            "#!/bin/sh\n"
+            "printf '%s\\n' \"$*\" >> \"${NPM_LOG:?}\"\n"
+            + ("printf changed >> package-lock.json\n" if change_lock else "")
+            + "mkdir -p .git/hooks\nprintf '# lefthook managed\\n' > .git/hooks/pre-commit\n"
+        )
+        npm.chmod(0o755)
+        return npm
+
+    def paseo_env(self, home: Path, remote: Path, target: Path, commit: str, npm: Path) -> dict[str, str]:
+        env = os.environ.copy()
+        env.update({
+            "HOME": str(home), "PASEO_REPO_DIR": str(target),
+            "PASEO_FORK_URL": str(remote), "PASEO_UPSTREAM_URL": str(remote) + "-upstream",
+            "PASEO_BRANCH": "main", "PASEO_VERIFIED_COMMIT": commit,
+            "PASEO_NPM_BIN": str(npm), "NPM_LOG": str(home.parent / "npm.log"),
+        })
+        return env
+
+    def executable(self, path: Path, text: str) -> Path:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text)
+        path.chmod(0o755)
+        return path
+
     def test_repository_does_not_own_codex_home(self) -> None:
         self.assertFalse((HOME_MIRROR / ".codex").exists())
 
@@ -157,44 +203,233 @@ class SetupShapeTests(unittest.TestCase):
                 (fake_home / ".config" / "codex-room" / "overlays" / "harness.config.toml").exists()
             )
 
-    def test_paseo_fork_installer_links_cli(self) -> None:
+    def test_paseo_fresh_install_is_exact_and_atomic(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
-            fake_home = Path(temporary) / "home"
-            checkout = Path(temporary) / "paseo"
-            cli = checkout / "packages" / "cli" / "bin" / "paseo"
-            cli.parent.mkdir(parents=True)
-            cli.write_text("#!/usr/bin/env node\n")
-            subprocess.run(["git", "init", "-q", str(checkout)], check=True)
-            subprocess.run(["git", "-C", str(checkout), "add", "."], check=True)
-            subprocess.run(
-                [
-                    "git", "-C", str(checkout),
-                    "-c", "user.name=Test", "-c", "user.email=test@example.invalid",
-                    "commit", "-qm", "fixture",
-                ],
-                check=True,
-            )
-
-            env = os.environ.copy()
-            env.update(
-                {
-                    "HOME": str(fake_home),
-                    "PASEO_REPO_DIR": str(checkout),
-                    "PASEO_FORK_URL": "git@example.invalid:fork/paseo.git",
-                    "PASEO_UPSTREAM_URL": "git@example.invalid:upstream/paseo.git",
-                }
-            )
-            subprocess.run(
-                [str(ROOT / "scripts" / "install-paseo-fork")],
-                check=True,
-                env=env,
-                capture_output=True,
-                text=True,
-            )
-
-            link = fake_home / ".local" / "bin" / "paseo"
+            root = Path(temporary); home = root / "home"; target = root / "installed"
+            remote, first, second = self.make_paseo_remote(root)
+            npm = self.fake_npm(root)
+            env = self.paseo_env(home, remote, target, second, npm)
+            subprocess.run([str(ROOT / "scripts" / "install-paseo-fork")], check=True, env=env, capture_output=True, text=True)
+            self.assertEqual(subprocess.run(["git", "-C", str(target), "rev-parse", "HEAD"], check=True, capture_output=True, text=True).stdout.strip(), second)
+            link = home / ".local" / "bin" / "paseo"
             self.assertTrue(link.is_symlink())
-            self.assertEqual(os.readlink(link), str(cli))
+            self.assertEqual(os.readlink(link), str(target / "packages/cli/bin/paseo"))
+            self.assertEqual((root / "npm.log").read_text().splitlines(), ["ci"])
+
+            wrong_target = root / "wrong"
+            failed = subprocess.run([str(ROOT / "scripts" / "install-paseo-fork")], env=self.paseo_env(home, remote, wrong_target, first, npm), capture_output=True, text=True)
+            self.assertNotEqual(failed.returncode, 0)
+            self.assertFalse(wrong_target.exists())
+
+    def test_paseo_existing_transitions_and_refusals_are_fail_safe(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary); home = root / "home"
+            remote, first, second = self.make_paseo_remote(root)
+            npm = self.fake_npm(root)
+
+            def clone(name: str, commit: str = first) -> tuple[Path, dict[str, str]]:
+                target = root / name
+                subprocess.run(["git", "clone", "-q", str(remote), str(target)], check=True)
+                subprocess.run(["git", "-C", str(target), "checkout", "-q", "-B", "main", commit], check=True)
+                subprocess.run(["git", "-C", str(target), "remote", "add", "upstream", str(remote) + "-upstream"], check=True)
+                subprocess.run(["git", "-C", str(target), "config", "branch.main.remote", "origin"], check=True)
+                return target, self.paseo_env(home, remote, target, second, npm)
+
+            target, env = clone("ff")
+            (target / ".codex").mkdir()
+            subprocess.run([str(ROOT / "scripts" / "install-paseo-fork")], check=True, env=env, capture_output=True, text=True)
+            self.assertEqual(subprocess.run(["git", "-C", str(target), "rev-parse", "HEAD"], check=True, capture_output=True, text=True).stdout.strip(), second)
+            self.assertTrue((target / ".codex").is_dir())
+            before = subprocess.run(["git", "-C", str(target), "rev-parse", "HEAD"], check=True, capture_output=True, text=True).stdout.strip()
+            subprocess.run([str(ROOT / "scripts" / "install-paseo-fork")], check=True, env=env, capture_output=True, text=True)
+            self.assertEqual(before, subprocess.run(["git", "-C", str(target), "rev-parse", "HEAD"], check=True, capture_output=True, text=True).stdout.strip())
+
+            dirty, dirty_env = clone("dirty")
+            (dirty / "package.json").write_text("dirty\n")
+            failed = subprocess.run([str(ROOT / "scripts" / "install-paseo-fork")], env=dirty_env, capture_output=True, text=True)
+            self.assertNotEqual(failed.returncode, 0)
+            self.assertEqual(subprocess.run(["git", "-C", str(dirty), "rev-parse", "HEAD"], check=True, capture_output=True, text=True).stdout.strip(), first)
+
+            detached, detached_env = clone("detached")
+            subprocess.run(["git", "-C", str(detached), "checkout", "-q", "--detach", first], check=True)
+            self.assertNotEqual(subprocess.run([str(ROOT / "scripts" / "install-paseo-fork")], env=detached_env).returncode, 0)
+
+            custom, custom_env = clone("custom")
+            subprocess.run(["git", "-C", str(custom), "remote", "set-url", "origin", str(root / "custom.git")], check=True)
+            self.assertNotEqual(subprocess.run([str(ROOT / "scripts" / "install-paseo-fork")], env=custom_env).returncode, 0)
+            self.assertEqual(subprocess.run(["git", "-C", str(custom), "remote", "get-url", "origin"], check=True, capture_output=True, text=True).stdout.strip(), str(root / "custom.git"))
+
+            divergent, divergent_env = clone("divergent")
+            (divergent / "local.txt").write_text("ahead\n")
+            subprocess.run(["git", "-C", str(divergent), "add", "."], check=True)
+            subprocess.run(["git", "-C", str(divergent), "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "-qm", "local"], check=True)
+            divergent_head = subprocess.run(["git", "-C", str(divergent), "rev-parse", "HEAD"], check=True, capture_output=True, text=True).stdout.strip()
+            self.assertNotEqual(subprocess.run([str(ROOT / "scripts" / "install-paseo-fork")], env=divergent_env).returncode, 0)
+            self.assertEqual(subprocess.run(["git", "-C", str(divergent), "rev-parse", "HEAD"], check=True, capture_output=True, text=True).stdout.strip(), divergent_head)
+
+    def test_paseo_exact_legacy_migration_and_hook_lock_contract(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary); home = root / "home"; remote, _, second = self.make_paseo_remote(root); npm = self.fake_npm(root)
+            target = root / "legacy"
+            subprocess.run(["git", "clone", "-q", str(remote), str(target)], check=True)
+            subprocess.run(["git", "-C", str(target), "remote", "rename", "origin", "hoangnb24"], check=True)
+            subprocess.run(["git", "-C", str(target), "remote", "add", "origin", str(remote) + "-upstream"], check=True)
+            subprocess.run(["git", "-C", str(target), "config", "branch.main.remote", "origin"], check=True)
+            env = self.paseo_env(home, remote, target, second, npm)
+            subprocess.run([str(ROOT / "scripts" / "install-paseo-fork")], check=True, env=env, capture_output=True, text=True)
+            self.assertEqual(subprocess.run(["git", "-C", str(target), "remote", "get-url", "origin"], check=True, capture_output=True, text=True).stdout.strip(), str(remote))
+            self.assertEqual(subprocess.run(["git", "-C", str(target), "remote", "get-url", "upstream"], check=True, capture_output=True, text=True).stdout.strip(), str(remote) + "-upstream")
+
+            (target / ".git/hooks/pre-push").write_text("#!/bin/sh\necho custom\n")
+            before_log = (root / "npm.log").read_text()
+            self.assertNotEqual(subprocess.run([str(ROOT / "scripts" / "install-paseo-fork")], env=env).returncode, 0)
+            self.assertEqual((root / "npm.log").read_text(), before_log)
+
+            (target / ".git/hooks/pre-push").unlink()
+            changing_npm = self.fake_npm(root / "changing", change_lock=True)
+            changing_env = self.paseo_env(home, remote, target, second, changing_npm)
+            self.assertNotEqual(subprocess.run([str(ROOT / "scripts" / "install-paseo-fork")], env=changing_env).returncode, 0)
+
+    def test_fork_provenance_and_update_sources_are_explicit(self) -> None:
+        paseo_source = (ROOT / "paseo" / "source.toml").read_text()
+        harness_source = (ROOT / "better-harness" / "source.toml").read_text()
+        harness_guide = (ROOT / "docs" / "better-harness-role.md").read_text()
+        updater = (HOME_MIRROR / ".local" / "bin" / "paseo-local-update").read_text()
+
+        self.assertIn('fork = "git@github.com:hoangnb24/paseo.git"', paseo_source)
+        self.assertIn(
+            'verified_commit = "8511089eaeb06cddd049b629562926822020de5c"',
+            paseo_source,
+        )
+        self.assertIn(
+            'fork = "https://github.com/hoangnb24/better-harness.git"',
+            harness_source,
+        )
+        self.assertIn(
+            'verified_commit = "ef5253ca2e201d46a7071c3fc9c1de7237d3f86c"',
+            harness_source,
+        )
+        self.assertIn("github.com/hoangnb24/better-harness.git", harness_guide)
+        self.assertNotIn("github.com/QoderAI/better-harness.git \\", harness_guide)
+        for forbidden in ("git pull", "git rebase", "git reset", "npm install"):
+            self.assertNotIn(forbidden, updater)
+        self.assertIn('git ls-remote "$PASEO_FORK_URL"', updater)
+        self.assertIn('"$NPM_BIN" ci', updater)
+        self.assertIn("PASEO_VERIFIED_COMMIT", updater)
+
+    def test_updater_rejects_moved_ref_before_dependency_or_build_actions(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary); home = root / "home"; target = root / "checkout"
+            remote, first, second = self.make_paseo_remote(root)
+            subprocess.run(["git", "clone", "-q", str(remote), str(target)], check=True)
+            subprocess.run(["git", "-C", str(target), "checkout", "-q", "-B", "main", first], check=True)
+            subprocess.run(["git", "-C", str(target), "remote", "add", "upstream", str(remote) + "-upstream"], check=True)
+            subprocess.run(["git", "-C", str(target), "config", "branch.main.remote", "origin"], check=True)
+            npm = self.fake_npm(root)
+            env = self.paseo_env(home, remote, target, first, npm)
+            failed = subprocess.run([str(HOME_MIRROR / ".local/bin/paseo-local-update")], env=env, capture_output=True, text=True)
+            self.assertNotEqual(failed.returncode, 0)
+            self.assertFalse((root / "npm.log").exists())
+            self.assertEqual(subprocess.run(["git", "-C", str(target), "rev-parse", "HEAD"], check=True, capture_output=True, text=True).stdout.strip(), first)
+            self.assertIn(second, subprocess.run(["git", "ls-remote", str(remote), "refs/heads/main"], check=True, capture_output=True, text=True).stdout)
+
+    def test_bootstrap_preflights_before_mutation_and_rolls_back_harness(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary); bin_dir = root / "bin"; log = root / "actions.log"
+            runtime = root / "runtime"; harness = runtime / "harness"; harness.mkdir(parents=True)
+            (harness / "state").write_text("prior\n")
+            component = self.executable(
+                bin_dir / "component",
+                "#!/bin/sh\nprintf 'component %s\\n' \"$*\" >> \"$ACTION_LOG\"\n"
+            )
+            verify = self.executable(bin_dir / "verify", "#!/bin/sh\necho verify >> \"$ACTION_LOG\"\n")
+            sync = self.executable(
+                bin_dir / "sync",
+                "#!/bin/sh\nprintf 'sync %s\\n' \"$*\" >> \"$ACTION_LOG\"\n"
+                "mkdir -p \"$LIVE_HOME\"\nprintf 'mutated\\n' > \"$LIVE_HOME/state\"\n"
+            )
+            self.executable(bin_dir / "ocr", "#!/bin/sh\necho 'open-code-review v0.0.0'\n")
+            npm = self.executable(bin_dir / "npm", "#!/bin/sh\nprintf 'npm %s\\n' \"$*\" >> \"$ACTION_LOG\"\n")
+            self.executable(bin_dir / "node", "#!/bin/sh\nexit 0\n")
+            self.executable(
+                bin_dir / "codex",
+                "#!/usr/bin/env python3\n"
+                "import json, os, pathlib, sys\n"
+                "home=pathlib.Path(os.environ['CODEX_HOME']); root=home/'market-root'\n"
+                "args=sys.argv[1:]\n"
+                "if args[:3] == ['plugin','marketplace','add']:\n root.mkdir(parents=True,exist_ok=True); print('{}')\n"
+                "elif args[:3] == ['plugin','marketplace','list']:\n print(json.dumps({'marketplaces':[{'name':'better-harness','root':str(root),'marketplaceSource':{'sourceType':'git','source':'https://github.com/hoangnb24/better-harness.git'}}]}))\n"
+                "elif args[:2] == ['plugin','add']:\n"
+                " print('{}') if str(home) != os.environ['LIVE_HOME'] else sys.exit(23)\n"
+                "elif args[:2] == ['plugin','list']:\n print(json.dumps({'installed':[{'pluginId':'better-harness@better-harness','installed':True,'enabled':True}], 'available':[]}))\n"
+                "else: print('{}')\n"
+            )
+            self.executable(
+                bin_dir / "git",
+                "#!/bin/sh\ncase \"$2\" in */market-root) echo ef5253ca2e201d46a7071c3fc9c1de7237d3f86c ;; *) exec /usr/bin/git \"$@\" ;; esac\n"
+            )
+            env = os.environ.copy()
+            env.update({
+                "HOME": str(root / "home"), "PATH": str(bin_dir) + os.pathsep + env["PATH"],
+                "ACTION_LOG": str(log), "LIVE_HOME": str(harness), "CODEX_ROOM_RUNTIME_ROOT": str(runtime),
+                "PASEO_INSTALL_BIN": str(component), "CODEX_ROOM_INSTALL_BIN": str(component),
+                "CODEX_ROOM_SYNC_ALL_BIN": str(sync), "CODEX_ROOM_VERIFY_BIN": str(verify),
+                "CODEX_ROOM_NPM_BIN": str(npm),
+            })
+            failed = subprocess.run([str(ROOT / "scripts/bootstrap"), "--apply"], env=env, capture_output=True, text=True)
+            self.assertNotEqual(failed.returncode, 0)
+            self.assertEqual((harness / "state").read_text(), "prior\n")
+            actions = log.read_text().splitlines()
+            self.assertEqual(actions[0], "component --preflight")
+            self.assertIn("npm install --global @alibaba-group/open-code-review@1.11.0", actions)
+            self.assertLess(actions.index("component --preflight"), actions.index("npm install --global @alibaba-group/open-code-review@1.11.0"))
+            self.assertNotIn("verify", actions)
+
+    def test_installed_verify_honors_custom_paseo_repo_and_marketplace_root(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary); home = root / "home"; runtime = home / ".codex-runtime"
+            subprocess.run([str(ROOT / "scripts/install"), "--apply"], env={**os.environ, "HOME": str(home)}, check=True, capture_output=True, text=True)
+            paseo = root / "custom-paseo"; (paseo / "packages/cli/bin").mkdir(parents=True)
+            (paseo / "packages/cli/bin/paseo").write_text("#!/usr/bin/env node\n")
+            subprocess.run(["git", "init", "-q", "-b", "main", str(paseo)], check=True)
+            subprocess.run(["git", "-C", str(paseo), "add", "."], check=True)
+            subprocess.run(["git", "-C", str(paseo), "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "-qm", "fixture"], check=True)
+            subprocess.run(["git", "-C", str(paseo), "remote", "add", "origin", "git@github.com:hoangnb24/paseo.git"], check=True)
+            subprocess.run(["git", "-C", str(paseo), "remote", "add", "upstream", "git@github.com:getpaseo/paseo.git"], check=True)
+            subprocess.run(["git", "-C", str(paseo), "config", "branch.main.remote", "origin"], check=True)
+            subprocess.run(["git", "-C", str(paseo), "config", "branch.main.merge", "refs/heads/main"], check=True)
+            link = home / ".local/bin/paseo"
+            link.symlink_to(paseo / "packages/cli/bin/paseo")
+            canonical_plugins = home / ".codex/plugins"; canonical_plugins.mkdir(parents=True)
+            for role in ("supervisor", "lead", "peer", "review", "harness"):
+                role_home = runtime / role; role_home.mkdir(parents=True)
+                (role_home / "config.toml").write_text("multi_agent = false\n")
+                (role_home / "model-catalog.no-native-agents.json").write_text("{}\n")
+                if role != "harness": (role_home / "plugins").symlink_to(canonical_plugins, target_is_directory=True)
+            (runtime / "harness/plugins").mkdir()
+            harness_root = root / "harness-root"; harness_root.mkdir()
+            bin_dir = root / "bin"
+            self.executable(bin_dir / "ocr", "#!/bin/sh\necho 'open-code-review v1.11.0'\n")
+            self.executable(
+                bin_dir / "codex",
+                "#!/usr/bin/env python3\nimport json, os, sys\n"
+                "print(json.dumps({'marketplaces':[{'name':'better-harness','root':os.environ['HARNESS_ROOT'],'marketplaceSource':{'sourceType':'git','source':'https://github.com/hoangnb24/better-harness.git'}}]}) if sys.argv[1:4] == ['plugin','marketplace','list'] else json.dumps({'installed':[{'pluginId':'better-harness@better-harness','installed':True,'enabled':True}]}))\n"
+            )
+            self.executable(
+                bin_dir / "git",
+                "#!/bin/sh\n"
+                "if [ \"$1\" = -C ] && [ \"$3\" = rev-parse ] && [ \"$4\" = HEAD ]; then\n"
+                " case \"$2\" in \"$PASEO_REPO_DIR\") echo 8511089eaeb06cddd049b629562926822020de5c ;; \"$HARNESS_ROOT\") echo ef5253ca2e201d46a7071c3fc9c1de7237d3f86c ;; *) exec /usr/bin/git \"$@\" ;; esac\n"
+                "else exec /usr/bin/git \"$@\"; fi\n"
+            )
+            env = os.environ.copy(); env.update({
+                "HOME": str(home), "PASEO_REPO_DIR": str(paseo), "HARNESS_ROOT": str(harness_root),
+                "PATH": str(bin_dir) + os.pathsep + env["PATH"],
+            })
+            completed = subprocess.run([str(ROOT / "scripts/verify")], env=env, capture_output=True, text=True)
+            self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+            self.assertIn("OK    Paseo CLI links to local fork", completed.stdout)
+            self.assertIn("OK    Better Harness marketplace root is audited commit", completed.stdout)
 
     def test_sync_all_uses_the_common_generator_for_all_five_roles(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

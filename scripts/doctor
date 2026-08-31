@@ -20,6 +20,29 @@ for command_name in codex python3 git jq node npm; do
   check_command "$command_name"
 done
 
+expected_codex_version=$(awk -F'"' '/^codex_cli = / {print $2}' "$REPO_ROOT/paseo/versions.toml")
+actual_codex_version=$(codex --version 2>/dev/null | awk '{print $2}' || true)
+if [[ "$actual_codex_version" == "$expected_codex_version" ]]; then
+  log "OK    Codex CLI    $actual_codex_version"
+else
+  log "WARN  Codex CLI    expected $expected_codex_version; found ${actual_codex_version:-unknown}"
+  warnings=$((warnings + 1))
+fi
+
+expected_ocr_version=$(awk -F'"' '/^open_code_review = / {print $2}' "$REPO_ROOT/paseo/versions.toml")
+if command -v ocr >/dev/null 2>&1; then
+  actual_ocr_version=$(ocr --version 2>/dev/null | sed -n 's/^open-code-review v\([^ ]*\).*/\1/p')
+  if [[ "$actual_ocr_version" == "$expected_ocr_version" ]]; then
+    log "OK    OCR          $actual_ocr_version"
+  else
+    log "WARN  OCR          expected $expected_ocr_version; found ${actual_ocr_version:-unknown}"
+    warnings=$((warnings + 1))
+  fi
+else
+  log "WARN  OCR          missing; exploratory Review will stop"
+  warnings=$((warnings + 1))
+fi
+
 if [[ -d "$HOME/.codex" ]]; then
   log "OK    Codex home   $HOME/.codex"
 else
@@ -47,10 +70,61 @@ esac
 paseo_checkout="${PASEO_REPO_DIR:-$HOME/projects/supervisors/paseo}"
 if [[ -d "$paseo_checkout/.git" ]]; then
   log "OK    Paseo fork   $paseo_checkout"
-  log "INFO  branch       $(git -C "$paseo_checkout" branch --show-current)"
-  log "INFO  commit       $(git -C "$paseo_checkout" rev-parse --short HEAD)"
+  paseo_branch=$(awk -F'"' '/^branch = / {print $2; exit}' "$REPO_ROOT/paseo/source.toml")
+  paseo_commit=$(awk -F'"' '/^verified_commit = / {print $2}' "$REPO_ROOT/paseo/source.toml")
+  paseo_fork=$(awk -F'"' '/^fork = / {print $2}' "$REPO_ROOT/paseo/source.toml")
+  paseo_upstream=$(awk -F'"' '/^upstream = / {print $2}' "$REPO_ROOT/paseo/source.toml")
+  actual_branch=$(git -C "$paseo_checkout" branch --show-current)
+  actual_commit=$(git -C "$paseo_checkout" rev-parse HEAD)
+  actual_origin=$(git -C "$paseo_checkout" remote get-url origin 2>/dev/null || true)
+  actual_upstream=$(git -C "$paseo_checkout" remote get-url upstream 2>/dev/null || true)
+  tracking_remote=$(git -C "$paseo_checkout" config --get "branch.$paseo_branch.remote" || true)
+  tracking_merge=$(git -C "$paseo_checkout" config --get "branch.$paseo_branch.merge" || true)
+  remote_names=$(git -C "$paseo_checkout" remote | LC_ALL=C sort | tr '\n' ' ')
+
+  for check_pair in \
+    "branch|$paseo_branch|$actual_branch" \
+    "commit|$paseo_commit|$actual_commit" \
+    "origin|$paseo_fork|$actual_origin" \
+    "upstream|$paseo_upstream|$actual_upstream" \
+    "tracking|origin|$tracking_remote" \
+    "tracking-ref|refs/heads/$paseo_branch|$tracking_merge" \
+    "remote-set|origin upstream |$remote_names"; do
+    IFS='|' read -r label expected actual <<<"$check_pair"
+    if [[ "$actual" == "$expected" ]]; then
+      log "OK    Paseo $label  $actual"
+    else
+      log "WARN  Paseo $label  expected $expected; found ${actual:-missing}"
+      warnings=$((warnings + 1))
+    fi
+  done
 else
   log "WARN  Paseo fork   not found at $paseo_checkout"
+  warnings=$((warnings + 1))
+fi
+
+harness_home="${CODEX_ROOM_RUNTIME_ROOT:-$HOME/.codex-runtime}/harness"
+expected_harness_source=$(awk -F'"' '/^fork = / {print $2; exit}' "$REPO_ROOT/better-harness/source.toml")
+expected_harness_ref=$(awk -F'"' '/^verified_commit = / {print $2}' "$REPO_ROOT/better-harness/source.toml")
+if [[ -f "$harness_home/config.toml" ]]; then
+  if CODEX_HOME="$harness_home" codex plugin list --marketplace better-harness --json 2>/dev/null |
+    jq -e 'any(.installed[]?; .pluginId == "better-harness@better-harness" and .installed == true and .enabled == true)' >/dev/null; then
+    log "OK    Harness      Better Harness is installed and enabled"
+  else
+    log "WARN  Harness      Better Harness is not installed and enabled"
+    warnings=$((warnings + 1))
+  fi
+  harness_marketplace=$(awk -F'"' '/^marketplace = / {print $2}' "$REPO_ROOT/better-harness/source.toml")
+  marketplace_json=$(CODEX_HOME="$harness_home" codex plugin marketplace list --json 2>/dev/null || true)
+  harness_root=$(jq -er --arg name "$harness_marketplace" --arg source "$expected_harness_source" '.marketplaces[] | select(.name == $name and .marketplaceSource.sourceType == "git" and .marketplaceSource.source == $source) | .root' <<<"$marketplace_json" 2>/dev/null || true)
+  if [[ -n "$harness_root" && "$(git -C "$harness_root" rev-parse HEAD 2>/dev/null || true)" == "$expected_harness_ref" ]]; then
+    log "OK    Harness ref  $expected_harness_ref"
+  else
+    log "WARN  Harness ref  marketplace root is not commit $expected_harness_ref"
+    warnings=$((warnings + 1))
+  fi
+else
+  log "WARN  Harness      runtime missing; run install and sync before plugin setup"
   warnings=$((warnings + 1))
 fi
 
@@ -59,4 +133,3 @@ if [[ "$failures" -gt 0 ]]; then
   die "$failures required check(s) failed; $warnings warning(s)"
 fi
 log "DOCTOR_OK: $warnings warning(s)"
-

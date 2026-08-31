@@ -1,7 +1,7 @@
 [verified]
-paseo = "0.4.0"
-codex_cli = "0.147.0"
+paseo = "0.7.0-beta.1"
+codex_cli = "0.150.1"
+open_code_review = "1.11.0"
 
 # Node and npm are intentionally not pinned here. Use the versions supported
 # by the fork's package.json/package manager metadata.
-

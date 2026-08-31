@@ -19,25 +19,40 @@ After Codex CLI installs Better Harness, sync also preserves only its exact
 Harness config. It does not retain other runtime config edits and does not
 synthesize either registration before installation.
 
-Sync is deliberately offline and never installs Better Harness. After the
-normal install and sync lifecycle, install the audited plugin explicitly into
-the Harness profile:
+Sync is deliberately offline and never installs Better Harness. The normal
+fresh-machine path is `scripts/bootstrap --apply`, which performs the following
+audited plugin installation after creating the Harness profile. For targeted
+maintenance, the equivalent commands are:
 
 ```bash
-BETTER_HARNESS_REF=bd7a0d78fbd1b7b1908eb30c6d51798d4dc0a0f5
+BETTER_HARNESS_REF=ef5253ca2e201d46a7071c3fc9c1de7237d3f86c
 CODEX_HOME="$HOME/.codex-runtime/harness" \
-  codex plugin marketplace add https://github.com/QoderAI/better-harness.git \
+  codex plugin marketplace add https://github.com/hoangnb24/better-harness.git \
   --ref "$BETTER_HARNESS_REF"
 CODEX_HOME="$HOME/.codex-runtime/harness" \
   codex plugin add better-harness@better-harness
 CODEX_HOME="$HOME/.codex-runtime/harness" \
   codex plugin list --marketplace better-harness --json
+CODEX_HOME="$HOME/.codex-runtime/harness" \
+  codex plugin marketplace list --json
 ```
 
-Replace `BETTER_HARNESS_REF` only with a newly audited immutable commit. These
-commands are operator actions; `scripts/install`, `scripts/sync-all`, and
-`codex-room-sync` never run them, infer registration from the plugin cache, or
-write to canonical `~/.codex`.
+This ref contains the fork's provider-home provenance and trusted lifecycle
+attribution changes on top of upstream v0.6.5. The machine-readable source of
+truth is [`../better-harness/source.toml`](../better-harness/source.toml).
+Replace `BETTER_HARNESS_REF` only with a newly audited immutable commit from the
+fork. These commands are operator actions; `scripts/install`,
+`scripts/sync-all`, and `codex-room-sync` never run them, infer registration
+from the plugin cache, or write to canonical `~/.codex`.
+
+`scripts/bootstrap --apply` first repeats the add/install in a disposable
+`CODEX_HOME`, obtains the marketplace checkout root from
+`codex plugin marketplace list --json`, and requires that root's Git `HEAD` to
+equal the audited commit. This happens before OCR, tracked config, runtime, live
+Paseo, or plugin state changes. Before live Better Harness replacement,
+bootstrap snapshots the Harness runtime; any failed remove, add, install, root
+verification, sync, or final verification restores the prior registration and
+private plugin/marketplace state. Errors are not suppressed.
 
 ## Evidence boundary
 

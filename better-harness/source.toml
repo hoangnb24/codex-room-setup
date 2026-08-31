@@ -1,0 +1,12 @@
+[repository]
+fork = "https://github.com/hoangnb24/better-harness.git"
+upstream = "https://github.com/QoderAI/better-harness.git"
+branch = "feat/lifecycle-linkage-attribution"
+verified_commit = "ef5253ca2e201d46a7071c3fc9c1de7237d3f86c"
+upstream_baseline = "bd7a0d78fbd1b7b1908eb30c6d51798d4dc0a0f5"
+upstream_version = "0.6.5"
+
+[install]
+marketplace = "better-harness"
+plugin = "better-harness@better-harness"
+runtime = "~/.codex-runtime/harness"

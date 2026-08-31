@@ -44,12 +44,25 @@ git clone <this-repository-url> codex-room-setup
 cd codex-room-setup
 
 ./scripts/doctor
-./scripts/install                 # dry-run only
-./scripts/install --apply         # backup and install
-./scripts/install-paseo-fork      # clone/verify the fork and link its CLI
-./scripts/sync-all                # materialize five CODEX_HOME directories
-./scripts/verify                  # verify installed files and runtimes
+./scripts/bootstrap               # dry-run: show every pinned dependency/action
+./scripts/bootstrap --apply       # install dependencies, config and five runtimes
 ```
+
+`scripts/bootstrap` installs the pinned Open Code Review release, normalizes
+the Paseo checkout to `origin = hoangnb24 fork` and `upstream = public repo`,
+installs Paseo's npm dependencies, and installs Better Harness from its audited
+fork commit into the private Harness home. It does not install or authenticate
+Codex and does not build Paseo Desktop. The lower-level `install`,
+`install-paseo-fork`, `sync-all`, and `verify` commands remain available for
+targeted maintenance.
+
+Both source manifests pin immutable commits. Bootstrap preflights Paseo and
+Better Harness in disposable locations before changing live state. Paseo uses
+`npm ci` and refuses custom Git hooks because its audited `prepare` lifecycle
+installs lefthook; updates are exact-pin/no-op or fast-forward-only and never
+silently pull from public upstream. Better Harness installation verifies the
+actual marketplace checkout commit and restores the previous Harness runtime if
+the live transition fails.
 
 The installer backs up every replaced file under:
 
@@ -69,7 +82,10 @@ paseo daemon status
 paseo-local-update
 ```
 
-That command updates the checkout, installs dependencies, builds and signs the local Desktop app, backs up the previous `/Applications/Paseo.app`, restarts the daemon, and opens Paseo.
+That command validates provenance and hook/lock safety, advances only to the
+audited commit, runs `npm ci`, builds and ad-hoc signs the local Desktop app,
+backs up the prior `/Applications/Paseo.app`, installs the new build, and
+restarts Paseo.
 
 ## Roles
 
@@ -93,7 +109,9 @@ home. Its plugins are private to `~/.codex-runtime/harness`; the other four
 roles continue to share `~/.codex/plugins`. Harness dispatches exactly three
 fresh read-only Peer seats through Paseo while native Codex agents remain off.
 See [docs/better-harness-role.md](docs/better-harness-role.md) for the explicit,
-profile-local plugin installation and evidence-scope procedure.
+profile-local plugin installation and evidence-scope procedure. The audited
+fork and immutable commit are recorded in
+[`better-harness/source.toml`](better-harness/source.toml).
 
 ## Common operations
 

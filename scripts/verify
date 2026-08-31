@@ -19,6 +19,10 @@ done
 
 require_command python3
 require_command jq
+if [[ "$mode" == installed ]]; then
+  require_command codex
+  require_command ocr
+fi
 
 failures=0
 check() {
@@ -49,6 +53,8 @@ check "Paseo config is valid JSON" jq -e . "$config_template"
 check "room sync exists" test -f "$sync_path"
 check "workspace protocol exists" test -f "$workflow_root/WORKSPACE_PROTOCOL.md"
 check "workflow pilot reporter is executable" test -x "$REPO_ROOT/scripts/workflow-pilot-report"
+check "Paseo provenance manifest exists" test -f "$REPO_ROOT/paseo/source.toml"
+check "Better Harness provenance manifest exists" test -f "$REPO_ROOT/better-harness/source.toml"
 
 for role in supervisor lead peer review harness; do
   check "$role overlay exists" test -f "$overlays_root/$role.config.toml"
@@ -83,9 +89,23 @@ check "review defaults to Luna Max" jq -e '
 ' "$config_template"
 
 if [[ "$mode" == installed ]]; then
-  expected_paseo_cli="$HOME/projects/supervisors/paseo/packages/cli/bin/paseo"
+  expected_ocr_version=$(awk -F'"' '/^open_code_review = / {print $2}' "$REPO_ROOT/paseo/versions.toml")
+  actual_ocr_version=$(ocr --version 2>/dev/null | sed -n 's/^open-code-review v\([^ ]*\).*/\1/p')
+  check "Open Code Review version" test "$actual_ocr_version" = "$expected_ocr_version"
+  paseo_checkout="${PASEO_REPO_DIR:-$HOME/projects/supervisors/paseo}"
+  expected_paseo_cli="$paseo_checkout/packages/cli/bin/paseo"
   check "Paseo CLI links to local fork" test \
     "$(readlink "$HOME/.local/bin/paseo" 2>/dev/null || true)" = "$expected_paseo_cli"
+  expected_paseo_commit=$(awk -F'"' '/^verified_commit = / {print $2}' "$REPO_ROOT/paseo/source.toml")
+  expected_paseo_branch=$(awk -F'"' '/^branch = / {print $2; exit}' "$REPO_ROOT/paseo/source.toml")
+  expected_paseo_fork=$(awk -F'"' '/^fork = / {print $2; exit}' "$REPO_ROOT/paseo/source.toml")
+  expected_paseo_upstream=$(awk -F'"' '/^upstream = / {print $2; exit}' "$REPO_ROOT/paseo/source.toml")
+  check "Paseo checkout commit" test "$(git -C "$paseo_checkout" rev-parse HEAD 2>/dev/null || true)" = "$expected_paseo_commit"
+  check "Paseo checkout branch" test "$(git -C "$paseo_checkout" branch --show-current 2>/dev/null || true)" = "$expected_paseo_branch"
+  check "Paseo origin is owner fork" test "$(git -C "$paseo_checkout" remote get-url origin 2>/dev/null || true)" = "$expected_paseo_fork"
+  check "Paseo upstream is public" test "$(git -C "$paseo_checkout" remote get-url upstream 2>/dev/null || true)" = "$expected_paseo_upstream"
+  check "Paseo branch tracks origin" test "$(git -C "$paseo_checkout" config --get "branch.$expected_paseo_branch.remote" 2>/dev/null || true)" = origin
+  check "Paseo tracking ref" test "$(git -C "$paseo_checkout" config --get "branch.$expected_paseo_branch.merge" 2>/dev/null || true)" = "refs/heads/$expected_paseo_branch"
   for role in supervisor lead peer review harness; do
     runtime="$HOME/.codex-runtime/$role"
     check "$role runtime config" test -f "$runtime/config.toml"
@@ -100,6 +120,25 @@ if [[ "$mode" == installed ]]; then
   done
   check "harness plugins are private" test -d "$HOME/.codex-runtime/harness/plugins"
   check "harness plugins are not a symlink" test ! -L "$HOME/.codex-runtime/harness/plugins"
+  expected_harness_source=$(awk -F'"' '/^fork = / {print $2; exit}' "$REPO_ROOT/better-harness/source.toml")
+  expected_harness_ref=$(awk -F'"' '/^verified_commit = / {print $2}' "$REPO_ROOT/better-harness/source.toml")
+  if CODEX_HOME="$HOME/.codex-runtime/harness" codex plugin list \
+    --marketplace better-harness --json 2>/dev/null |
+    jq -e 'any(.installed[]?; .pluginId == "better-harness@better-harness" and .installed == true and .enabled == true)' >/dev/null; then
+    log "OK    Better Harness is installed and enabled"
+  else
+    log "FAIL  Better Harness is not installed and enabled"
+    failures=$((failures + 1))
+  fi
+  harness_marketplace=$(awk -F'"' '/^marketplace = / {print $2}' "$REPO_ROOT/better-harness/source.toml")
+  marketplace_json=$(CODEX_HOME="$HOME/.codex-runtime/harness" codex plugin marketplace list --json 2>/dev/null || true)
+  harness_root=$(jq -er --arg name "$harness_marketplace" --arg source "$expected_harness_source" '.marketplaces[] | select(.name == $name and .marketplaceSource.sourceType == "git" and .marketplaceSource.source == $source) | .root' <<<"$marketplace_json" 2>/dev/null || true)
+  if [[ -n "$harness_root" && "$(git -C "$harness_root" rev-parse HEAD 2>/dev/null || true)" == "$expected_harness_ref" ]]; then
+    log "OK    Better Harness marketplace root is audited commit"
+  else
+    log "FAIL  Better Harness marketplace root is not audited commit"
+    failures=$((failures + 1))
+  fi
   for role in review harness; do
     if [[ -f "$HOME/.codex-runtime/$role/config.toml" ]]; then
       if grep -Eq '^\[mcp_servers\.' "$HOME/.codex-runtime/$role/config.toml"; then
