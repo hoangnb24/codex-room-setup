@@ -111,10 +111,8 @@ Lead selects the smallest sufficient route:
 | Route | Use | Default model | Expected rounds |
 | --- | --- | --- | --- |
 | `NO_REVIEW` | Tiny or low-risk work Lead can inspect directly | none | 0 |
-| Read-only Peer | Premise, architecture, solution-shape, or non-OCR macro review | Sol Medium | 1 bounded review |
-| `FAST` Review | Accepted findings, correction base, and bounded delta | Sol Medium | 1 close-out |
-| `DEEP` Review | OCR-assisted frozen candidate with uncertain file or rule selection | Luna Max | 1 exploratory review |
-| `DUAL` | OCR lane plus a distinct Peer macro lane when system risk warrants both | lane-specific | concurrent |
+| Read-only Peer | Premise, architecture, solution-shape, macro, or candidate review | Sol Medium | 1 bounded review |
+| `FAST` Peer close-out | Accepted findings, correction base, and bounded delta | Sol Medium | 1 close-out |
 
 Review is pull-based. A new diff, commit, frontier, or completed Peer task is
 not itself a review trigger. Dispatch independent review only when its result
@@ -123,16 +121,6 @@ the concern more cheaply. Review a premise early when a wrong choice would lock
 architecture or lifecycle. Before an irreversible or owner-gated action,
 review only when material residual risk remains after owning checks. Otherwise,
 batch related work at one stable integration or acceptance boundary.
-
-Lead never runs OCR. The Review agent runs `command -v ocr`, then
-`ocr delegate preview`, then `ocr delegate rule` for every `DEEP EXPLORATORY`
-review. It independently verifies the selected files, selected rules, and
-findings. Any command failure, empty or malformed result, invalid file or rule
-selection, or result that cannot be reconciled with the candidate and contract
-causes `DEPENDENCY_REQUEST`. There is no manual fallback. A clear `FAST`
-close-out does not invoke OCR by default. `codex-review` is not a general macro
-review route. The same provider offers Luna Max as the default for `DEEP` and
-Sol Medium as a non-default choice for `FAST`.
 
 An exploratory review returns one complete batch of material findings. Lead
 rules once and freezes the accepted finding set. One writer owns one correction
@@ -145,7 +133,7 @@ a third review loop automatically.
 For pilot observability, Lead labels review seats with `review_class`,
 `review_mode`, `review_lane`, `review_round`, `candidate`, and
 `review_model_actual` when practical. Every close-out uses `review_class: FAST`,
-even when it reuses the original DEEP Reviewer seat. Review class measures the
+even when it reuses the original Peer reviewer seat. Review class measures the
 work boundary; `review_model_actual` measures the runtime choice. These labels
 contain coordination metadata only; do not put prompts, source, or private
 evidence in labels.

@@ -1,10 +1,10 @@
 # Codex Room Setup
 
-Reproducible configuration for a five-role Codex room running through a local Paseo fork:
+Reproducible configuration for a three-role Codex room running through a local Paseo fork:
 
 ```text
 Paseo provider
-  -> codex-room <supervisor|lead|peer|review|harness>
+  -> codex-room <supervisor|lead|peer>
   -> codex-room-sync
   -> isolated ~/.codex-runtime/<role>
   -> Codex app-server
@@ -45,24 +45,21 @@ cd codex-room-setup
 
 ./scripts/doctor
 ./scripts/bootstrap               # dry-run: show every pinned dependency/action
-./scripts/bootstrap --apply       # install dependencies, config and five runtimes
+./scripts/bootstrap --apply       # install dependencies, config and three runtimes
 ```
 
-`scripts/bootstrap` installs the pinned Open Code Review release, normalizes
-the Paseo checkout to `origin = hoangnb24 fork` and `upstream = public repo`,
-installs Paseo's npm dependencies, and installs Better Harness from its audited
-fork commit into the private Harness home. It does not install or authenticate
-Codex and does not build Paseo Desktop. The lower-level `install`,
+`scripts/bootstrap` normalizes the Paseo checkout to `origin = hoangnb24 fork`
+and `upstream = public repo`, then installs Paseo's npm dependencies and the
+three retained role runtimes. It does not require OCR or Better Harness, install
+or authenticate Codex, or build Paseo Desktop. The lower-level `install`,
 `install-paseo-fork`, `sync-all`, and `verify` commands remain available for
 targeted maintenance.
 
-Both source manifests pin immutable commits. Bootstrap preflights Paseo and
-Better Harness in disposable locations before changing live state. Paseo uses
+The Paseo source manifest pins an immutable commit. Bootstrap preflights Paseo
+in a disposable location before changing live state. Paseo uses
 `npm ci` and refuses custom Git hooks because its audited `prepare` lifecycle
 installs lefthook; updates are exact-pin/no-op or fast-forward-only and never
-silently pull from public upstream. Better Harness installation verifies the
-actual marketplace checkout commit and restores the previous Harness runtime if
-the live transition fails.
+silently pull from public upstream.
 
 The installer backs up every replaced file under:
 
@@ -94,24 +91,10 @@ restarts Paseo.
 | Supervisor | `gpt-5.6-sol` | medium | yes |
 | Lead | `gpt-5.6-sol` | medium | yes |
 | Peer | `gpt-5.6-sol` | medium | no |
-| Review (OCR-assisted stable candidate) | `gpt-5.6-luna` | max | no |
-| Harness (Better Harness coordinator) | `gpt-5.6-sol` | medium | yes |
-
-Lead sends premise, architecture, and macro review to a read-only Peer. Lead
-uses Review only for a frozen, bounded candidate that needs OCR-assisted file or
-rule selection. Lead does not run OCR. All role overlays currently request
-`danger-full-access` with `approval_policy = "never"`. Review additionally
-strips inherited MCP server tables. Read
+Lead sends premise, architecture, candidate, and macro review to a read-only
+Peer. All role overlays currently request `danger-full-access` with
+`approval_policy = "never"`. Read
 [docs/architecture.md](docs/architecture.md) before changing these boundaries.
-
-Harness coordinates one Better Harness report over one explicitly selected role
-home. Its plugins are private to `~/.codex-runtime/harness`; the other four
-roles continue to share `~/.codex/plugins`. Harness dispatches exactly three
-fresh read-only Peer seats through Paseo while native Codex agents remain off.
-See [docs/better-harness-role.md](docs/better-harness-role.md) for the explicit,
-profile-local plugin installation and evidence-scope procedure. The audited
-fork and immutable commit are recorded in
-[`better-harness/source.toml`](better-harness/source.toml).
 
 ## Common operations
 

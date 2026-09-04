@@ -5,6 +5,14 @@ source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/common.sh"
 
 [[ "${1:-}" == "--apply" ]] || die "export overwrites tracked source; rerun with --apply"
 require_command python3
+require_command jq
+
+jq -e '
+  ([.agents.providers | keys[] | select(startswith("codex-"))] | sort) ==
+    ["codex-lead", "codex-peer", "codex-supervisor"] and
+  .daemon.mcp.injectIntoProviders == ["codex-supervisor", "codex-lead"]
+' "$HOME/.paseo/config.json" >/dev/null ||
+  die "installed Paseo config does not have the exact three-role contract"
 
 export_one() {
   local source_path="$1"
@@ -23,13 +31,13 @@ PY
 }
 
 export_one "$HOME/.config/codex-room/model-instructions.md" "$REPO_ROOT/home/.config/codex-room/model-instructions.md"
-for role in supervisor lead peer review harness; do
+for role in supervisor lead peer; do
   export_one "$HOME/.config/codex-room/overlays/$role.config.toml" "$REPO_ROOT/home/.config/codex-room/overlays/$role.config.toml"
 done
 for name in WORKSPACE_PROTOCOL.md ANTI_PATTERNS.md SUPERVISOR_NOTEBOOK.md; do
   export_one "$HOME/.config/codex-room/workflow/$name" "$REPO_ROOT/home/.config/codex-room/workflow/$name"
 done
-for name in codex-room codex-room-sync codex-room-hard-cut codex-review-apply paseo-local-update; do
+for name in codex-room codex-room-sync paseo-local-update; do
   export_one "$HOME/.local/bin/$name" "$REPO_ROOT/home/.local/bin/$name"
 done
 export_one "$HOME/.paseo/config.json" "$REPO_ROOT/home/.paseo/config.json.template"

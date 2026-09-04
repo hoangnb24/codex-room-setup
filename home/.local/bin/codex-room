@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-usage="usage: codex-room <supervisor|lead|peer|review|harness> [codex args...] | codex-room --resolve-evidence-home <role>"
+usage="usage: codex-room <supervisor|lead|peer> [codex args...] | codex-room --resolve-evidence-home <role>"
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 sync_bin="${CODEX_ROOM_SYNC_BIN:-${script_dir}/codex-room-sync}"
@@ -15,7 +15,7 @@ if [[ "${1:-}" == "--resolve-evidence-home" ]]; then
   [[ "$#" -eq 2 ]] || { echo "$usage" >&2; exit 2; }
   evidence_role="$2"
   case "$evidence_role" in
-    supervisor|lead|peer|review|harness) ;;
+    supervisor|lead|peer) ;;
     *) echo "unknown evidence role: $evidence_role" >&2; exit 2 ;;
   esac
   exec python3 - "$runtime_root" "$evidence_role" <<'PY'
@@ -41,6 +41,11 @@ fi
 
 role="${1:?$usage}"
 shift
+
+case "$role" in
+  supervisor|lead|peer) ;;
+  *) echo "unknown role: $role" >&2; exit 2 ;;
+esac
 
 "${sync_bin}" "${role}"
 export CODEX_HOME="${runtime_root}/${role}"

@@ -85,10 +85,9 @@ provider identity are evidence, not acceptance. Inspect the actual artifact,
 its integration consequences, and proportionate verification before deciding.
 
 Select the smallest review route. Use `NO_REVIEW` for tiny or low-risk work.
-Use a read-only ordinary Peer for independent architecture, premise,
-solution-shape, system-level macro, or other non-OCR macro review. Use
-`codex-review` only for an OCR-assisted review of a frozen, bounded candidate
-when file or rule selection is materially uncertain. Lead never runs OCR.
+Use a read-only Peer for independent architecture, premise, solution-shape,
+system-level macro, or candidate review. A Peer reviews only the stable
+candidate and bounded lane named in its assignment.
 
 Review is pull-based. A new diff, commit, frontier, or completed Peer task is
 not itself a review trigger. Dispatch independent review only when its result
@@ -98,24 +97,6 @@ architecture or lifecycle. Before an irreversible or owner-gated action,
 review only when material residual risk remains after owning checks. Otherwise,
 batch related work at one stable integration or acceptance boundary.
 
-Classify a `codex-review` exploratory lane as `DEEP`; prefer
-`codex-review/gpt-5.6-luna` with max reasoning. The Review agent must run
-`command -v ocr`, then `ocr delegate preview`, then `ocr delegate rule`, and
-must independently verify the selected files, selected rules, and findings.
-Review returns `DEPENDENCY_REQUEST` and stops if any command fails; any result
-is empty or malformed; a file or rule selection is invalid; or the result
-cannot be independently reconciled with the candidate and contract. Do not
-substitute a manual or non-OCR `codex-review` pass. Use `FAST` for one bounded
-accepted finding set, its correction delta, and direct regressions; prefer
-`codex-review/gpt-5.6-sol` with medium reasoning. When accepted finding IDs, the
-correction base, and the delta are clear, `FAST` close-out does not use OCR by
-default.
-
-Use `DUAL` only when an OCR-assisted lane is warranted and system-level risk
-also warrants one distinct read-only macro lane. Route the macro lane to an
-ordinary Peer. Run the two dependency-independent lanes concurrently and give
-them different concerns. Do not use two reviewers to inspect the same concern.
-
 Every review brief identifies `review_mode: EXPLORATORY | CLOSEOUT`, one review
 lane, the exact candidate, and the material contract. A `CLOSEOUT` brief also
 identifies the accepted finding IDs, correction base, and correction delta.
@@ -124,7 +105,7 @@ When practical, label the seat with `review_class`, `review_mode`,
 pilot without reading prompts. Every
 `CLOSEOUT` brief uses `review_class: FAST`, even when you reuse the original
 Reviewer seat. Also record `review_model_actual`; review class describes scope,
-not the executing runtime. OCR is not a reason to expand a close-out.
+not the executing runtime.
 
 An exploratory Reviewer returns one complete batch of material findings before
 correction. Inspect and rule once on that batch, freeze the accepted finding
@@ -136,7 +117,7 @@ direct regressions; it does not restart broad review. The workflow permits one
 exploratory batch, one correction batch, and one bounded close-out. It does not
 start a third loop automatically. If close-out would require a second
 correction in the same family, perform convergence reconciliation before any
-new dispatch. Codex Review findings are evidence, not acceptance; retain
+new dispatch. Peer review findings are evidence, not acceptance; retain
 technical verdict and correction routing.
 
 Do not split a vertical architectural change into artificial independently

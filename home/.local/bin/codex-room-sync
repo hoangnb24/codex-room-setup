@@ -15,8 +15,6 @@ ROLE_FILES = {
     "supervisor": "supervisor.config.toml",
     "lead": "lead.config.toml",
     "peer": "peer.config.toml",
-    "review": "review.config.toml",
-    "harness": "harness.config.toml",
 }
 OVERRIDE_KEYS = {
     "model",
@@ -32,10 +30,6 @@ SHARED_WORKFLOW_RESOURCES = (
     "ANTI_PATTERNS.md",
 )
 LEGACY_RUNTIME_LINKS = ("WORKSPACE_PROTOCOL.md",)
-HARNESS_REGISTRATION_TABLES = (
-    "marketplaces.better-harness",
-    'plugins."better-harness@better-harness"',
-)
 
 
 def resolved_path(env_name: str, default: pathlib.Path) -> pathlib.Path:
@@ -124,48 +118,6 @@ def set_table_scalar(text: str, table: str, key: str, value: str) -> str:
     return text[:match.end()] + section + text[section_end:]
 
 
-def strip_mcp_server_tables(text: str) -> str:
-    """Remove every mcp_servers table and its body from a merged config."""
-    mcp_header = re.compile(r"^\s*\[\[?\s*mcp_servers(?:\.|\s*\])")
-    table_header = re.compile(r"^\s*\[\[?")
-    rendered: list[str] = []
-    skipping = False
-    for line in text.splitlines(keepends=True):
-        if mcp_header.match(line):
-            skipping = True
-            continue
-        if skipping and table_header.match(line):
-            skipping = False
-        if not skipping:
-            rendered.append(line)
-    return "".join(rendered)
-
-
-def exact_table(text: str, table: str) -> str:
-    """Return one exact TOML table and its body, excluding the next table."""
-    header = re.compile(rf"(?m)^[ \t]*\[{re.escape(table)}\][ \t]*(?:#.*)?$")
-    match = header.search(text)
-    if not match:
-        return ""
-    next_table = re.search(r"(?m)^[ \t]*\[", text[match.end():])
-    section_end = match.end() + (next_table.start() if next_table else len(text[match.end():]))
-    return text[match.start():section_end].strip() + "\n"
-
-
-def preserve_harness_registration(merged: str, existing: str) -> str:
-    """Compose only CLI-owned Better Harness registration into fresh config."""
-    preserved: list[str] = []
-    for table in HARNESS_REGISTRATION_TABLES:
-        if exact_table(merged, table):
-            continue
-        section = exact_table(existing, table)
-        if section:
-            preserved.append(section)
-    if not preserved:
-        return merged
-    return merged.rstrip() + "\n\n" + "\n".join(preserved)
-
-
 def safe_link(runtime: pathlib.Path, name: str, target: pathlib.Path) -> None:
     if not target.exists():
         raise SystemExit(f"shared target does not exist: {target}")
@@ -177,32 +129,6 @@ def safe_link(runtime: pathlib.Path, name: str, target: pathlib.Path) -> None:
     if path.is_symlink():
         path.unlink()
     path.symlink_to(target)
-
-
-def preflight_private_plugins(runtime: pathlib.Path, canonical_plugins: pathlib.Path) -> None:
-    """Validate Harness's plugin path without changing the runtime."""
-    path = runtime / "plugins"
-    if path.is_symlink():
-        if path.resolve() != canonical_plugins.resolve():
-            raise SystemExit(f"refusing to replace unexpected runtime symlink: {path}")
-    elif path.exists():
-        if not path.is_dir():
-            raise SystemExit(f"refusing to replace non-directory runtime path: {path}")
-
-
-def migrate_private_plugins(runtime: pathlib.Path, canonical_plugins: pathlib.Path) -> None:
-    """Apply the preflighted Harness plugin migration as the final operation."""
-    path = runtime / "plugins"
-    if path.is_symlink():
-        if path.resolve() != canonical_plugins.resolve():
-            raise SystemExit(f"runtime plugins path changed after preflight: {path}")
-        path.unlink()
-    elif path.exists():
-        if not path.is_dir():
-            raise SystemExit(f"runtime plugins path changed after preflight: {path}")
-        path.chmod(0o700)
-        return
-    path.mkdir(mode=0o700)
 
 
 def preflight_link(runtime: pathlib.Path, name: str, target: pathlib.Path) -> None:
@@ -269,14 +195,10 @@ def main() -> None:
     runtime = runtime_root / role
     base = paths["base"].read_text()
     overlay = (paths["overlays"] / ROLE_FILES[role]).read_text()
-    existing_config = runtime / "config.toml"
-    existing = existing_config.read_text() if role == "harness" and existing_config.is_file() else ""
     catalog_content = prepare_catalog()
     model_catalog = runtime / "model-catalog.no-native-agents.json"
 
     for name in SHARED_CODEX_RESOURCES:
-        if role == "harness" and name == "plugins":
-            continue
         preflight_link(runtime, name, paths["codex_shared"] / name)
     for name in SHARED_ROOM_RESOURCES:
         preflight_link(runtime, name, paths["room_shared"] / name)
@@ -291,8 +213,6 @@ def main() -> None:
         notebook_template = paths["workflow"] / "SUPERVISOR_NOTEBOOK.md"
         if not notebook.exists() and not notebook_template.exists():
             raise SystemExit(f"Supervisor notebook template does not exist: {notebook_template}")
-    if role == "harness":
-        preflight_private_plugins(runtime, paths["codex_shared"] / "plugins")
 
     offset = top_level_table_offset(base)
     overrides = scalar_overrides(overlay)
@@ -302,13 +222,9 @@ def main() -> None:
     tail = base[offset:]
     instructions = developer_block(overlay)
     merged = head + (instructions + "\n" if instructions else "") + tail.lstrip()
-    if role in {"review", "harness"}:
-        merged = strip_mcp_server_tables(merged)
     merged = set_table_scalar(merged, "agents", "enabled", "false")
     merged = set_table_scalar(merged, "features", "multi_agent", "false")
     merged = set_table_scalar(merged, "features", "multi_agent_v2", "false")
-    if role == "harness":
-        merged = preserve_harness_registration(merged, existing)
 
     runtime_root.mkdir(parents=True, exist_ok=True)
     runtime_root.chmod(0o700)
@@ -318,8 +234,6 @@ def main() -> None:
     write_atomic(runtime / "config.toml", merged)
 
     for name in SHARED_CODEX_RESOURCES:
-        if role == "harness" and name == "plugins":
-            continue
         safe_link(runtime, name, paths["codex_shared"] / name)
     for name in SHARED_ROOM_RESOURCES:
         safe_link(runtime, name, paths["room_shared"] / name)
@@ -332,8 +246,6 @@ def main() -> None:
         notebook_template = paths["workflow"] / "SUPERVISOR_NOTEBOOK.md"
         if not notebook.exists():
             write_atomic(notebook, notebook_template.read_text())
-    if role == "harness":
-        migrate_private_plugins(runtime, paths["codex_shared"] / "plugins")
 
     # App-server reserves stdout for its JSONL protocol. Keep sync diagnostics on
     # stderr so the launcher cannot corrupt the provider stream.

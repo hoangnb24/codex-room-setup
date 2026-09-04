@@ -1,4 +1,7 @@
-# Better Harness role
+# Better Harness role (archived)
+
+This document records the retired five-role runtime. Better Harness is not
+installed, generated, launched, exported, or verified by the active core.
 
 Harness is a fifth Codex Room role for coordinating one read-only Better
 Harness report. It uses the common `codex-room harness` launcher and

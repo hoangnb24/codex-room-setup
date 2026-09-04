@@ -48,17 +48,11 @@ done <<'EOF'
 .config/codex-room/overlays/supervisor.config.toml|.config/codex-room/overlays/supervisor.config.toml
 .config/codex-room/overlays/lead.config.toml|.config/codex-room/overlays/lead.config.toml
 .config/codex-room/overlays/peer.config.toml|.config/codex-room/overlays/peer.config.toml
-.config/codex-room/overlays/review.config.toml|.config/codex-room/overlays/review.config.toml
-.config/codex-room/overlays/harness.config.toml|.config/codex-room/overlays/harness.config.toml
 .config/codex-room/workflow/WORKSPACE_PROTOCOL.md|.config/codex-room/workflow/WORKSPACE_PROTOCOL.md
 .config/codex-room/workflow/ANTI_PATTERNS.md|.config/codex-room/workflow/ANTI_PATTERNS.md
 .config/codex-room/workflow/SUPERVISOR_NOTEBOOK.md|.config/codex-room/workflow/SUPERVISOR_NOTEBOOK.md
-.config/codex-room/paseo.phase2-coexist.candidate.json.template|.config/codex-room/paseo.phase2-coexist.candidate.json
-.config/codex-room/paseo.phase2-hard-cut.candidate.json.template|.config/codex-room/paseo.phase2-hard-cut.candidate.json
 .local/bin/codex-room|.local/bin/codex-room
 .local/bin/codex-room-sync|.local/bin/codex-room-sync
-.local/bin/codex-room-hard-cut|.local/bin/codex-room-hard-cut
-.local/bin/codex-review-apply|.local/bin/codex-review-apply
 .local/bin/paseo-local-update|.local/bin/paseo-local-update
 .paseo/config.json.template|.paseo/config.json
 EOF

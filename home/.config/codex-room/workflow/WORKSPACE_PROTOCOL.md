@@ -5,7 +5,7 @@
 - owner: Human
 - version: 2-pilot
 - applies_to: all projects operated through codex-room
-- readers: Supervisor, Lead, Peer, and Review
+- readers: Supervisor, Lead, and Peer
 - required companion for complex/repeated failures: `ANTI_PATTERNS.md`
 
 ## Precedence and local refinement

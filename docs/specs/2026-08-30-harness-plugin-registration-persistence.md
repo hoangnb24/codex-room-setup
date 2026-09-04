@@ -1,4 +1,7 @@
-# Preserve Harness plugin registration across runtime sync
+# Preserve Harness plugin registration across runtime sync (archived)
+
+This specification describes retired behavior and is not an active runtime or
+installation contract.
 
 ## Traceability
 

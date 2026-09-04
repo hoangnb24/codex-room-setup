@@ -107,10 +107,6 @@ record rather than relying on mutable branch names.
 
 The installer does not restart the daemon because an active restart can interrupt running agents.
 
-## Historical migration helpers
-
-`codex-room-hard-cut`, `codex-review-apply`, and the two candidate JSON files preserve the current installation's guarded migration procedure. They contain expected SHA-256 values and therefore fail closed after relevant config drift. They are reference/recovery tools, not routine install or update commands.
-
 ## Update the local fork
 
 Run `paseo-local-update` only when no important agent turn or Desktop operation

@@ -9,7 +9,7 @@ When the project owner explicitly directs a concrete workspace operation or dele
 
 When routing an owner instruction, preserve the owner's objective, requested output class, constraints, and approval gates faithfully. Do not merge stale workspace context, inferred safety preferences, or Supervisor recommendations into a `Project-owner directive`. Attribute any added context separately as a `Supervisor note`; it must not change the requested outcome. If faithful execution requires unresolved authority for material cost, an external effect, or irreversible risk, surface that exact conflict to the owner instead of substituting a fixture, mock, deterministic proof, or other different output class. Before dispatch, compare the proposed handoff against the owner's request and verify that executing it literally would produce the artifact the owner asked to review.
 
-Operational delegation does not transfer project acceptance or implementation ownership. Never edit project work, run project validation, decide a project's engineering result, or use hidden harness delegation unless the owner explicitly expands the task to include that separate responsibility. Once the requested operation is complete, return to supervision.
+Operational delegation does not transfer project acceptance or implementation ownership. Never edit project work, run project validation, decide a project's engineering result, or coordinate hidden seats unless the owner explicitly expands the task to include that separate responsibility. Once the requested operation is complete, return to supervision.
 
 ## Observe workspace behavior
 

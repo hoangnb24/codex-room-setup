@@ -82,6 +82,22 @@ install_once() {
   install_one "$relative_source" "$relative_target" "$mode"
 }
 
+retire_obsolete() {
+  local relative_target="$1"
+  local target_path="$HOME/$relative_target"
+  [[ -e "$target_path" || -L "$target_path" ]] || return 0
+  changed=$((changed + 1))
+  if [[ "$apply" != true ]]; then
+    log "RETIRE     ~/$relative_target"
+    return
+  fi
+  local backup_path="$backup_root/$relative_target"
+  mkdir -p "$(dirname "$backup_path")"
+  cp -Pp "$target_path" "$backup_path"
+  rm -f "$target_path"
+  log "RETIRED    ~/$relative_target"
+}
+
 while IFS='|' read -r source target mode; do
   [[ -n "$source" ]] || continue
   install_one "$source" "$target" "$mode"
@@ -90,16 +106,10 @@ done <<'EOF'
 .config/codex-room/overlays/supervisor.config.toml|.config/codex-room/overlays/supervisor.config.toml|600
 .config/codex-room/overlays/lead.config.toml|.config/codex-room/overlays/lead.config.toml|600
 .config/codex-room/overlays/peer.config.toml|.config/codex-room/overlays/peer.config.toml|600
-.config/codex-room/overlays/review.config.toml|.config/codex-room/overlays/review.config.toml|600
-.config/codex-room/overlays/harness.config.toml|.config/codex-room/overlays/harness.config.toml|600
 .config/codex-room/workflow/WORKSPACE_PROTOCOL.md|.config/codex-room/workflow/WORKSPACE_PROTOCOL.md|644
 .config/codex-room/workflow/ANTI_PATTERNS.md|.config/codex-room/workflow/ANTI_PATTERNS.md|644
-.config/codex-room/paseo.phase2-coexist.candidate.json.template|.config/codex-room/paseo.phase2-coexist.candidate.json|600
-.config/codex-room/paseo.phase2-hard-cut.candidate.json.template|.config/codex-room/paseo.phase2-hard-cut.candidate.json|600
 .local/bin/codex-room|.local/bin/codex-room|755
 .local/bin/codex-room-sync|.local/bin/codex-room-sync|755
-.local/bin/codex-room-hard-cut|.local/bin/codex-room-hard-cut|700
-.local/bin/codex-review-apply|.local/bin/codex-review-apply|700
 .local/bin/paseo-local-update|.local/bin/paseo-local-update|755
 .paseo/config.json.template|.paseo/config.json|600
 EOF
@@ -108,6 +118,18 @@ install_once \
   ".config/codex-room/workflow/SUPERVISOR_NOTEBOOK.md" \
   ".config/codex-room/workflow/SUPERVISOR_NOTEBOOK.md" \
   644
+
+# These former entrypoints and inputs would keep Review/Harness addressable
+# after an upgrade. Back them up and retire them without touching role runtimes.
+for obsolete in \
+  .config/codex-room/overlays/review.config.toml \
+  .config/codex-room/overlays/harness.config.toml \
+  .config/codex-room/paseo.phase2-coexist.candidate.json \
+  .config/codex-room/paseo.phase2-hard-cut.candidate.json \
+  .local/bin/codex-room-hard-cut \
+  .local/bin/codex-review-apply; do
+  retire_obsolete "$obsolete"
+done
 
 if [[ "$apply" != true ]]; then
   log ""

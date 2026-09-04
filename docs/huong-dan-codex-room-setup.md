@@ -4,15 +4,13 @@ Tài liệu này dành cho người mới tiếp cận `codex-room-setup`. Mục
 
 ## 1. Bức tranh ngắn gọn nhất
 
-`codex-room-setup` tạo một “phòng làm việc” gồm năm vai trò Codex:
+`codex-room-setup` tạo một “phòng làm việc” gồm ba vai trò Codex:
 
 | Vai trò | Trách nhiệm cốt lõi | Có công cụ điều phối Paseo |
 | --- | --- | --- |
 | Supervisor | Quan sát nhiều workspace, chuyển chỉ thị của chủ dự án, phát hiện vấn đề quy trình | Có |
 | Lead | Chịu trách nhiệm kỹ thuật của một dự án: chia việc, tích hợp, kiểm chứng và ra quyết định | Có |
 | Peer | Thực hiện hoặc điều tra một phạm vi cụ thể do Lead giao | Không |
-| Review | Đọc và phản biện một candidate ổn định; không sửa code | Không |
-| Harness | Điều phối một báo cáo Better Harness chỉ-đọc cho đúng một role home | Có |
 
 Hãy hình dung hệ thống như sau:
 
@@ -63,14 +61,12 @@ Không đóng gói auth cùng cấu hình chia sẻ
 
 ### 2.2 Mỗi role có một `CODEX_HOME` riêng
 
-Năm thư mục runtime dự kiến là:
+Ba thư mục runtime dự kiến là:
 
 ```text
 ~/.codex-runtime/supervisor
 ~/.codex-runtime/lead
 ~/.codex-runtime/peer
-~/.codex-runtime/review
-~/.codex-runtime/harness
 ```
 
 Các role dùng chung danh tính và tài nguyên ổn định, nhưng tách state có thể thay đổi:
@@ -81,21 +77,17 @@ Các role dùng chung danh tính và tài nguyên ổn định, nhưng tách sta
 | `AGENTS.md` | `sessions/` |
 | `hooks.json` | log, memory, queue |
 | `skills/` | SQLite và state runtime |
-| `plugins/` (trừ Harness) | model catalog đã xử lý |
-
-Harness giữ `plugins/` riêng để Better Harness có vòng đời độc lập; bốn role
-còn lại vẫn nối tới `~/.codex/plugins`. Nhờ vậy, một session Review không trộn
-vào lịch sử của Lead, nhưng cả hai vẫn dùng cùng tài khoản Codex.
+| `plugins/` | model catalog đã xử lý |
 
 ### 2.3 Paseo sở hữu topology; native Codex agents bị tắt
 
-Paseo quyết định ai là Supervisor, Lead, Peer, Review và Harness. Vì vậy bộ setup chủ động:
+Paseo quyết định ai là Supervisor, Lead và Peer. Vì vậy bộ setup chủ động:
 
 - đặt `[agents].enabled = false`;
 - đặt `multi_agent = false` và `multi_agent_v2 = false`;
 - xóa `multi_agent_version` khỏi catalog model được sinh.
 
-Nếu không làm vậy, có thể tồn tại hai lớp điều phối song song: Paseo điều phối năm role, trong khi Codex lại tự tạo native agents bên trong từng role. Hậu quả là ownership và luồng giao việc trở nên khó kiểm soát.
+Nếu không làm vậy, có thể tồn tại hai lớp điều phối song song: Paseo điều phối ba role, trong khi Codex lại tự tạo native agents bên trong từng role. Hậu quả là ownership và luồng giao việc trở nên khó kiểm soát.
 
 ## 3. Bốn loại file: biết loại trước khi sửa
 
@@ -124,7 +116,7 @@ codex-room-setup/
 └── home/
     ├── .config/codex-room/
     │   ├── model-instructions.md    Chỉ dẫn chung cho Codex
-    │   ├── overlays/                Cấu hình riêng của năm role
+    │   ├── overlays/                Cấu hình riêng của ba role
     │   └── workflow/                Luật phối hợp giữa các role
     ├── .local/bin/
     │   ├── codex-room               Launcher chọn role
@@ -161,7 +153,7 @@ Khi sync, file được nối vào từng runtime:
 Ứng dụng phù hợp:
 
 - Muốn mọi role trả lời ngắn hơn: chỉnh quy tắc viết tại đây.
-- Muốn chỉ Review thay đổi cách báo cáo finding: chỉnh overlay của Review, không chỉnh file chung này.
+- Muốn Peer reviewer thay đổi cách báo cáo finding: chỉnh overlay của Peer, không chỉnh file chung này.
 - Muốn thêm quy tắc riêng cho một dự án: dùng `AGENTS.md` của dự án đó thay vì làm file chung phình to.
 
 ### 5.2 `overlays/*.config.toml`: tính cách và mặc định riêng của từng role
@@ -218,26 +210,6 @@ Peer được phép phản hồi ba tín hiệu quan trọng:
 
 Ví dụ, Lead giao “thêm cache vào adapter X”, nhưng Peer chứng minh dữ liệu sai do source-of-truth có hai owner. Peer nên trả `REOPEN_REQUEST` kèm bằng chứng thay vì thêm cache để che triệu chứng.
 
-#### Review overlay
-
-Review là profile OCR-assisted, chỉ đọc và phản biện một candidate cố định, có phạm vi giới hạn. Dùng Review khi việc chọn file hoặc rule còn bất định đáng kể. Mặc định dùng `gpt-5.6-luna` với reasoning `max`.
-
-Review phải:
-
-- xác nhận chính xác commit hoặc snapshot đang review;
-- trong `DEEP EXPLORATORY`, chạy `command -v ocr`, rồi `ocr delegate preview`, rồi `ocr delegate rule`;
-- trả `DEPENDENCY_REQUEST` nếu bất kỳ lệnh nào lỗi, kết quả rỗng hoặc sai định dạng, lựa chọn file/rule không hợp lệ, hoặc kết quả không thể đối chiếu với candidate và contract;
-- không thay OCR lỗi bằng review thủ công;
-- tự kiểm tra lại file, rule và finding do OCR chọn;
-- dừng với `STALE_CANDIDATE` nếu candidate đổi giữa chừng;
-- hạch toán 100% file trong candidate;
-- đưa finding theo dạng bằng chứng → hậu quả → cách bác bỏ → sửa nhỏ nhất;
-- không sửa code và không tự ra phán quyết `ACCEPT`/`REVISE`.
-
-Lead không chạy OCR. `FAST CLOSEOUT` không chạy OCR theo mặc định khi finding ID, correction base và delta đã rõ.
-
-Review còn bị xóa toàn bộ bảng `mcp_servers` kế thừa từ config gốc. Đây là phòng vệ thứ hai ngoài việc Paseo không inject MCP vào provider Review.
-
 ### 5.3 `workflow/`: luật phối hợp giữa các role
 
 Ba file trong thư mục này có mục đích khác nhau:
@@ -277,7 +249,7 @@ File không biến một nghi ngờ thành mệnh lệnh. Nó yêu cầu lập f
 
 ### 5.4 `.paseo/config.json.template`: catalog provider và ranh giới MCP
 
-File này nói cho Paseo biết có năm provider Codex tùy biến. Mỗi provider có:
+File này nói cho Paseo biết có ba provider Codex tùy biến. Mỗi provider có:
 
 - tên và mô tả hiển thị;
 - command, ví dụ `codex-room lead`;
@@ -294,12 +266,11 @@ File này nói cho Paseo biết có năm provider Codex tùy biến. Mỗi provi
 File còn giới hạn Paseo MCP injection cho:
 
 ```json
-["codex-supervisor", "codex-lead", "codex-harness"]
+["codex-supervisor", "codex-lead"]
 ```
 
-Lý do: Supervisor và Lead cần nhìn/điều phối workspace; Harness cần tạo đúng
-ba Peer bằng Paseo; Peer chỉ cần làm scope được giao; Review cần bề mặt công cụ
-nhỏ và độc lập hơn.
+Lý do: Supervisor và Lead cần nhìn hoặc điều phối workspace; Peer chỉ làm scope
+được giao và không được điều phối seat khác.
 
 Một điểm dễ sai là model tồn tại ở **hai nơi**:
 
@@ -346,11 +317,10 @@ Việc sync ngay trước khi chạy giúp thay đổi trong overlay đang hoạ
 6. đặt `multi_agent_version = null` cho mọi model.
 7. Ghi catalog mới bằng thao tác atomic.
 8. Ghép scalar và `developer_instructions` vào config gốc.
-9. Với Review, xóa các bảng MCP server kế thừa.
-10. Tắt native agents và hai feature flag multi-agent.
-11. Ghi `config.toml` bằng thao tác atomic.
-12. Tạo symlink tới auth, skill, plugin và workflow dùng chung.
-13. Nếu là Supervisor và chưa có notebook, khởi tạo notebook riêng.
+9. Tắt native agents và hai feature flag multi-agent.
+10. Ghi `config.toml` bằng thao tác atomic.
+11. Tạo symlink tới auth, skill, plugin và workflow dùng chung.
+12. Nếu là Supervisor và chưa có notebook, khởi tạo notebook riêng.
 
 “Atomic” ở đây nghĩa là ghi vào file tạm rồi thay thế file đích trong một bước. Nếu tiến trình hỏng giữa lúc ghi, khả năng để lại một config bị viết dở sẽ thấp hơn.
 
@@ -421,7 +391,7 @@ rồi thay chính tiến trình launcher bằng Codex. Từ góc nhìn Codex, th
 
 ### Bước 6: session được cô lập
 
-Codex ghi session/state mới dưới runtime Peer. Lead và Review không nhìn thấy session đó như session của chính mình, dù chúng dùng cùng auth và skill.
+Codex ghi session/state mới dưới runtime Peer. Lead không nhìn thấy session đó như session của chính mình, dù hai role dùng cùng auth và skill.
 
 ## 8. Cách tùy biến theo nhu cầu
 
@@ -451,7 +421,7 @@ Muốn giảm quyền, phải xem cả:
 - công cụ role thực sự cần;
 - các invariant bảo mật và hành vi đang được áp dụng.
 
-Ví dụ, đặt Review thành sandbox read-only nghe hợp lý, nhưng overlay hiện giải thích OCR preview cần ghi metadata session cục bộ. Vì vậy cần kiểm tra đường ghi thật trước khi đổi, nếu không Review có thể fail dù về mặt tổ chức nó là “behavioral read-only”.
+Ví dụ, đổi sandbox của Peer reviewer cần được kiểm tra với đường đọc và công cụ thật thay vì chỉ đổi tên quyền trong tài liệu.
 
 ### Trường hợp D: thêm một role mới
 
@@ -499,10 +469,6 @@ Kiểm tra theo thứ tự:
 4. daemon đã restart sau khi config đổi chưa;
 5. provider có xuất hiện trong inventory của daemon không.
 
-### “Review được gọi là read-only nhưng config là full access”
-
-“Read-only” ở đây trước hết là hợp đồng hành vi trong developer instructions. Sandbox vẫn full access để OCR preview có thể ghi metadata vận hành. Vì enforcement kỹ thuật và enforcement bằng instruction khác nhau, đây là một ranh giới cần cân nhắc kỹ nếu dùng ngoài môi trường tin cậy.
-
 ### “Có nên đưa runtime snapshot hoặc session vào vùng chia sẻ không?”
 
 Snapshot tóm tắt chỉ nên được đưa vào vùng chia sẻ có chủ đích sau khi xem lại. Raw session không nên chia sẻ vì có thể chứa prompt, output, đường dẫn, lệnh tool và secret.
@@ -514,7 +480,7 @@ Nếu chỉ giữ lại sáu ý, hãy giữ sáu ý này:
 1. Paseo chọn và điều phối role; Codex thực thi bên trong role.
 2. `codex-room-sync` là trung tâm: nó ghép base + overlay và tạo runtime.
 3. `~/.codex` là của người vận hành; bộ room không sở hữu auth hay state cá nhân.
-4. Bốn role dùng chung tài nguyên ổn định nhưng tách config/session/state.
+4. Ba role dùng chung tài nguyên ổn định nhưng tách config/session/state.
 5. File mẫu là nguồn thay đổi lâu dài; runtime chỉ là kết quả được sinh ra.
 6. Model, quyền và MCP thường có hơn một bề mặt cấu hình; phải giữ chúng đồng bộ.
 
