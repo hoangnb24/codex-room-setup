@@ -499,70 +499,6 @@ class SetupShapeTests(unittest.TestCase):
             self.assertEqual(subprocess.run(["git", "-C", str(target), "rev-parse", "HEAD"], check=True, capture_output=True, text=True).stdout.strip(), first)
             self.assertIn(second, subprocess.run(["git", "ls-remote", str(remote), "refs/heads/main"], check=True, capture_output=True, text=True).stdout)
 
-    def legacy_bootstrap_preflights_before_mutation_and_rolls_back_harness(self) -> None:
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary); bin_dir = root / "bin"; log = root / "actions.log"
-            runtime = root / "runtime"; harness = runtime / "harness"; harness.mkdir(parents=True)
-            (harness / "state").write_text("prior\n")
-            component = self.executable(
-                bin_dir / "component",
-                "#!/bin/sh\nprintf 'component %s\\n' \"$*\" >> \"$ACTION_LOG\"\n"
-            )
-            verify = self.executable(bin_dir / "verify", "#!/bin/sh\necho verify >> \"$ACTION_LOG\"\n")
-            sync = self.executable(
-                bin_dir / "sync",
-                "#!/bin/sh\nprintf 'sync %s\\n' \"$*\" >> \"$ACTION_LOG\"\n"
-                "mkdir -p \"$LIVE_HOME\"\nprintf 'mutated\\n' > \"$LIVE_HOME/state\"\n"
-            )
-            self.executable(bin_dir / "ocr", "#!/bin/sh\necho 'open-code-review v0.0.0'\n")
-            npm = self.executable(bin_dir / "npm", "#!/bin/sh\nprintf 'npm %s\\n' \"$*\" >> \"$ACTION_LOG\"\n")
-            self.executable(bin_dir / "node", "#!/bin/sh\nexit 0\n")
-            self.executable(
-                bin_dir / "codex",
-                "#!/usr/bin/env python3\n"
-                "import json, os, pathlib, sys\n"
-                "home=pathlib.Path(os.environ['CODEX_HOME']); root=home/'market-root'\n"
-                "args=sys.argv[1:]\n"
-                "if args[:3] == ['plugin','marketplace','add']:\n root.mkdir(parents=True,exist_ok=True); print('{}')\n"
-                "elif args[:3] == ['plugin','marketplace','list']:\n print(json.dumps({'marketplaces':[{'name':'better-harness','root':str(root),'marketplaceSource':{'sourceType':'git','source':'https://github.com/hoangnb24/better-harness.git'}}]}))\n"
-                "elif args[:2] == ['plugin','add']:\n"
-                " print('{}') if str(home) != os.environ['LIVE_HOME'] else sys.exit(23)\n"
-                "elif args[:2] == ['plugin','list']:\n print(json.dumps({'installed':[{'pluginId':'better-harness@better-harness','installed':True,'enabled':True}], 'available':[]}))\n"
-                "else: print('{}')\n"
-            )
-            self.executable(
-                bin_dir / "git",
-                "#!/bin/sh\ncase \"$2\" in */market-root) echo ef5253ca2e201d46a7071c3fc9c1de7237d3f86c ;; *) exec /usr/bin/git \"$@\" ;; esac\n"
-            )
-            env = os.environ.copy()
-            env.update({
-                "HOME": str(root / "home"), "PATH": str(bin_dir) + os.pathsep + env["PATH"],
-                "ACTION_LOG": str(log), "LIVE_HOME": str(harness), "CODEX_ROOM_RUNTIME_ROOT": str(runtime),
-                "PASEO_INSTALL_BIN": str(component), "CODEX_ROOM_INSTALL_BIN": str(component),
-                "CODEX_ROOM_SYNC_ALL_BIN": str(sync), "CODEX_ROOM_VERIFY_BIN": str(verify),
-                "CODEX_ROOM_NPM_BIN": str(npm),
-            })
-            failed = subprocess.run([str(ROOT / "scripts/bootstrap"), "--apply"], env=env, capture_output=True, text=True)
-            self.assertNotEqual(failed.returncode, 0)
-            self.assertEqual((harness / "state").read_text(), "prior\n")
-            actions = log.read_text().splitlines()
-            self.assertEqual(actions[0], "component --preflight")
-            self.assertIn("npm install --global @alibaba-group/open-code-review@1.11.0", actions)
-            self.assertLess(actions.index("component --preflight"), actions.index("npm install --global @alibaba-group/open-code-review@1.11.0"))
-            self.assertNotIn("verify", actions)
-
-            rejecting = self.executable(
-                bin_dir / "rejecting-paseo",
-                "#!/bin/sh\nprintf 'rejecting %s\\n' \"$*\" >> \"$ACTION_LOG\"\n"
-                "[ \"${1:-}\" != --preflight ] || exit 41\n"
-            )
-            log.unlink()
-            env["PASEO_INSTALL_BIN"] = str(rejecting)
-            failed_preflight = subprocess.run([str(ROOT / "scripts/bootstrap"), "--apply"], env=env, capture_output=True, text=True)
-            self.assertNotEqual(failed_preflight.returncode, 0)
-            self.assertEqual(log.read_text().splitlines(), ["rejecting --preflight"])
-            self.assertEqual((harness / "state").read_text(), "prior\n")
-
     def test_installed_verify_needs_only_three_roles_and_no_ocr_or_harness(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary); home = root / "home"; runtime = home / ".codex-runtime"
@@ -612,6 +548,59 @@ class SetupShapeTests(unittest.TestCase):
             self.assertFalse((root / "ocr.log").exists())
             self.assertEqual((runtime / "review/private").read_text(), "must remain ignored\n")
             self.assertEqual((runtime / "harness/private").read_text(), "must remain ignored\n")
+
+            lead_config = runtime / "lead/config.toml"
+            valid_config = lead_config.read_text()
+            lead_config.write_text(
+                "enabled = false\nmulti_agent = false\nmulti_agent_v2 = false\n"
+                "[agents]\nenabled = true\n"
+                "[features]\nmulti_agent = true\nmulti_agent_v2 = true\n"
+            )
+            wrong_table = subprocess.run(
+                [str(ROOT / "scripts/verify")], env=env, capture_output=True, text=True
+            )
+            self.assertNotEqual(wrong_table.returncode, 0)
+            self.assertIn("FAIL  lead native-agent policy disabled", wrong_table.stdout)
+            lead_config.write_text(valid_config)
+
+            lead_catalog = runtime / "lead/model-catalog.no-native-agents.json"
+            valid_catalog = lead_catalog.read_text()
+            lead_catalog.write_text('{"models":[]}\n')
+            empty_catalog = subprocess.run(
+                [str(ROOT / "scripts/verify")], env=env, capture_output=True, text=True
+            )
+            self.assertNotEqual(empty_catalog.returncode, 0)
+            self.assertIn("FAIL  lead model agent metadata disabled", empty_catalog.stdout)
+            lead_catalog.write_text(valid_catalog)
+
+            obsolete_links = [
+                home / ".config/codex-room/overlays/review.config.toml",
+                home / ".config/codex-room/overlays/harness.config.toml",
+                home / ".config/codex-room/paseo.phase2-coexist.candidate.json",
+                home / ".config/codex-room/paseo.phase2-hard-cut.candidate.json",
+                home / ".local/bin/codex-room-hard-cut",
+                home / ".local/bin/codex-review-apply",
+            ]
+            for obsolete_link in obsolete_links:
+                obsolete_link.symlink_to(root / "missing-obsolete-target")
+            dangling_obsolete = subprocess.run(
+                [str(ROOT / "scripts/verify")], env=env, capture_output=True, text=True
+            )
+            self.assertNotEqual(dangling_obsolete.returncode, 0)
+            self.assertEqual(
+                dangling_obsolete.stdout.count("FAIL  obsolete path is inactive"),
+                len(obsolete_links),
+            )
+            for obsolete_link in obsolete_links:
+                obsolete_link.unlink()
+
+            launcher = home / ".local/bin/codex-room"
+            launcher.chmod(0o644)
+            nonexecutable_launcher = subprocess.run(
+                [str(ROOT / "scripts/verify")], env=env, capture_output=True, text=True
+            )
+            self.assertNotEqual(nonexecutable_launcher.returncode, 0)
+            self.assertIn("FAIL  room launcher is executable", nonexecutable_launcher.stdout)
 
     def test_sync_all_uses_the_common_generator_for_all_three_roles(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -795,75 +784,6 @@ class SetupShapeTests(unittest.TestCase):
         self.assertIn("PEER_DISPOSITION v1", peer)
         self.assertIn("workflow pilot", supervisor)
 
-    def legacy_review_routing_and_ocr_boundaries(self) -> None:
-        config = json.loads(PASEO_TEMPLATE.read_text().replace("@@HOME@@", "/tmp/operator"))
-        providers = config["agents"]["providers"]
-        self.assertIn("codex-review", providers)
-        self.assertNotIn("codex-ocr", providers)
-        self.assertNotIn("codex-review", config["daemon"]["mcp"]["injectIntoProviders"])
-
-        lead = (ROOM / "overlays" / "lead.config.toml").read_text()
-        lead_words = " ".join(lead.split())
-        self.assertIn("Use `NO_REVIEW` for tiny or low-risk work", lead_words)
-        self.assertIn("Use a read-only ordinary Peer", lead_words)
-        self.assertIn("Lead never runs OCR", lead_words)
-        self.assertIn("Use `codex-review` only for an OCR-assisted review", lead_words)
-        self.assertIn("Review returns `DEPENDENCY_REQUEST` and stops if any command fails", lead_words)
-        self.assertIn("any result is empty or malformed", lead_words)
-        self.assertIn("a file or rule selection is invalid", lead_words)
-        self.assertIn(
-            "result cannot be independently reconciled with the candidate and contract",
-            lead_words,
-        )
-        self.assertIn("Do not substitute a manual or non-OCR", lead_words)
-        self.assertIn(
-            "one exploratory batch, one correction batch, and one bounded close-out",
-            lead_words,
-        )
-        self.assertIn("does not use OCR by default", lead_words)
-
-        peer = (ROOM / "overlays" / "peer.config.toml").read_text()
-        self.assertIn("system-level macro judgment", " ".join(peer.split()))
-        self.assertNotIn("ocr", peer.lower())
-        self.assertNotIn("open code review", peer.lower())
-
-        review = (ROOM / "overlays" / "review.config.toml").read_text()
-        command_check = review.index("`command -v ocr`")
-        preview = review.index("`ocr delegate preview`", command_check)
-        rule = review.index("`ocr delegate rule`", preview)
-        self.assertLess(command_check, preview)
-        self.assertLess(preview, rule)
-        review_words = " ".join(review.split())
-        self.assertIn("If any command fails, return `DEPENDENCY_REQUEST`", review_words)
-        self.assertIn("command result is empty or malformed", review_words)
-        self.assertIn("file or rule selection is invalid", review_words)
-        self.assertIn(
-            "result cannot be independently reconciled with the stable candidate and review contract",
-            review_words,
-        )
-        self.assertIn("Do not replace the required OCR evidence with a manual pass", review_words)
-        self.assertIn("selected files, selected rules, and findings", review_words)
-        self.assertIn("Do not ask Lead or the user to run them", review_words)
-        self.assertIn("Do not invoke OCR by default in `CLOSEOUT` mode", review_words)
-        self.assertIn("Behavioral read-only", review_words)
-        self.assertIn("Do not start a third loop automatically", review_words)
-
-    def legacy_harness_maps_exactly_three_read_only_better_harness_lanes(self) -> None:
-        harness = (ROOM / "overlays" / "harness.config.toml").read_text()
-        harness_words = " ".join(harness.split())
-        self.assertIn("exactly three fresh `codex-peer` seats", harness_words)
-        self.assertIn("Session Evidence", harness)
-        self.assertIn("Project Harness Evidence", harness)
-        self.assertIn("Agent Customize Evidence", harness)
-        self.assertIn("codex-room --resolve-evidence-home <role>", harness)
-        self.assertIn("--codex-home <resolved-absolute-home>", harness)
-        self.assertIn("$better-harness:better-harness", harness)
-        self.assertIn("inline/no-files", harness)
-        self.assertIn("Do not pass `--include-memories` or `--include-user-home` by default", harness_words)
-        self.assertIn("A Peer must not delegate", harness_words)
-        self.assertIn("use OCR", harness_words)
-        self.assertIn("edit project files", harness_words)
-
     def test_lead_review_is_pull_based(self) -> None:
         lead = (ROOM / "overlays" / "lead.config.toml").read_text()
         expected = """
@@ -1012,13 +932,64 @@ class RuntimeGenerationTests(unittest.TestCase):
             self.assertIn("usage:", completed.stderr)
             self.assertEqual(marker.read_bytes(), b"unchanged\x00")
 
-    def legacy_review_strips_mcp_servers(self) -> None:
-        runtime = self.run_sync("review")
-        self.assertNotIn("[mcp_servers.", (runtime / "config.toml").read_text())
+    def test_sync_and_normal_launcher_reject_redirected_active_role(self) -> None:
+        redirected = self.root / "redirected-lead"
+        redirected.mkdir()
+        marker = redirected / "private"
+        marker.write_bytes(b"do not touch\x00")
+        runtime_root = self.root / ".runtime"
+        runtime_root.mkdir()
+        (runtime_root / "lead").symlink_to(redirected, target_is_directory=True)
 
-    def legacy_harness_strips_inherited_mcp_servers(self) -> None:
-        runtime = self.run_sync("harness")
-        self.assertNotIn("[mcp_servers.", (runtime / "config.toml").read_text())
+        direct = self.run_sync_process("lead")
+        self.assertNotEqual(direct.returncode, 0)
+        self.assertIn("runtime role directory must not be a symlink", direct.stderr)
+        self.assertEqual(marker.read_bytes(), b"do not touch\x00")
+
+        codex_marker = self.root / "codex-was-launched"
+        fake_codex = self.root / "fake-codex"
+        fake_codex.write_text(f"#!/bin/sh\ntouch '{codex_marker}'\n")
+        fake_codex.chmod(0o755)
+        env = {
+            **os.environ,
+            "CODEX_ROOM_LAB_ROOT": str(self.root),
+            "CODEX_ROOM_SYNC_BIN": str(SYNC),
+            "CODEX_ROOM_MODEL_CATALOG": str(ROOT / "tests/fixtures/model-catalog.json"),
+            "CODEX_BIN": str(fake_codex),
+        }
+        launched = subprocess.run(
+            [str(LAUNCHER), "lead"], env=env, capture_output=True, text=True
+        )
+        self.assertEqual(launched.returncode, 2)
+        self.assertIn("runtime role directory must not be a symlink", launched.stderr)
+        self.assertFalse(codex_marker.exists())
+        self.assertEqual(marker.read_bytes(), b"do not touch\x00")
+
+        (runtime_root / "lead").unlink()
+        (runtime_root / "lead").mkdir()
+        swapping_sync = self.root / "swapping-sync"
+        swapping_sync.write_text(
+            "#!/usr/bin/env python3\n"
+            "import os, pathlib\n"
+            "role_home = pathlib.Path(os.environ['ROLE_HOME'])\n"
+            "role_home.rmdir()\n"
+            "role_home.symlink_to(os.environ['REDIRECT_TARGET'], target_is_directory=True)\n"
+        )
+        swapping_sync.chmod(0o755)
+        env.update(
+            {
+                "CODEX_ROOM_SYNC_BIN": str(swapping_sync),
+                "ROLE_HOME": str(runtime_root / "lead"),
+                "REDIRECT_TARGET": str(redirected),
+            }
+        )
+        swapped = subprocess.run(
+            [str(LAUNCHER), "lead"], env=env, capture_output=True, text=True
+        )
+        self.assertEqual(swapped.returncode, 2)
+        self.assertIn("runtime role directory became a symlink", swapped.stderr)
+        self.assertFalse(codex_marker.exists())
+        self.assertEqual(marker.read_bytes(), b"do not touch\x00")
 
     def test_sync_removes_legacy_workspace_protocol_link(self) -> None:
         runtime = self.root / ".runtime" / "lead"
@@ -1035,191 +1006,6 @@ class RuntimeGenerationTests(unittest.TestCase):
         runtime = self.run_sync("supervisor")
         self.assertIn("[mcp_servers.example]", (runtime / "config.toml").read_text())
         self.assertTrue((runtime / "SUPERVISOR_NOTEBOOK.md").is_file())
-
-    def legacy_harness_migrates_only_expected_canonical_plugins_symlink(self) -> None:
-        runtime = self.root / ".runtime" / "harness"
-        runtime.mkdir(parents=True)
-        (runtime / "plugins").symlink_to(self.canonical / "plugins", target_is_directory=True)
-
-        self.run_sync("harness")
-
-        self.assertTrue((runtime / "plugins").is_dir())
-        self.assertFalse((runtime / "plugins").is_symlink())
-
-    def legacy_harness_generation_failure_preserves_expected_plugins_symlink(self) -> None:
-        runtime = self.root / ".runtime" / "harness"
-        runtime.mkdir(parents=True)
-        plugins = runtime / "plugins"
-        plugins.symlink_to(self.canonical / "plugins", target_is_directory=True)
-        shutil.rmtree(self.canonical / "skills")
-
-        completed = self.run_sync_process("harness")
-
-        self.assertNotEqual(completed.returncode, 0)
-        self.assertIn("shared target does not exist", completed.stderr)
-        self.assertTrue(plugins.is_symlink())
-        self.assertEqual(plugins.resolve(), (self.canonical / "plugins").resolve())
-
-    def legacy_harness_config_write_failure_preserves_expected_plugins_symlink(self) -> None:
-        runtime = self.root / ".runtime" / "harness"
-        runtime.mkdir(parents=True)
-        plugins = runtime / "plugins"
-        plugins.symlink_to(self.canonical / "plugins", target_is_directory=True)
-        (runtime / "config.toml").mkdir()
-
-        completed = self.run_sync_process("harness")
-
-        self.assertNotEqual(completed.returncode, 0)
-        self.assertTrue((runtime / "model-catalog.no-native-agents.json").is_file())
-        self.assertTrue(plugins.is_symlink())
-        self.assertEqual(plugins.resolve(), (self.canonical / "plugins").resolve())
-
-    def legacy_harness_rejects_unexpected_plugin_paths(self) -> None:
-        for kind in ("unexpected-symlink", "file"):
-            with self.subTest(kind=kind):
-                runtime = self.root / ".runtime" / "harness"
-                if runtime.exists():
-                    shutil.rmtree(runtime)
-                runtime.mkdir(parents=True)
-                plugins = runtime / "plugins"
-                if kind == "unexpected-symlink":
-                    unexpected = self.root / "unexpected-plugins"
-                    unexpected.mkdir(exist_ok=True)
-                    plugins.symlink_to(unexpected, target_is_directory=True)
-                    expected_error = "refusing to replace unexpected runtime symlink"
-                else:
-                    plugins.write_text("not a directory\n")
-                    expected_error = "refusing to replace non-directory runtime path"
-
-                completed = self.run_sync_process("harness")
-
-                self.assertNotEqual(completed.returncode, 0)
-                self.assertIn(expected_error, completed.stderr)
-                if kind == "unexpected-symlink":
-                    self.assertTrue(plugins.is_symlink())
-                else:
-                    self.assertEqual(plugins.read_text(), "not a directory\n")
-
-    def legacy_harness_preserves_private_plugins_across_repeated_sync(self) -> None:
-        runtime = self.run_sync("harness")
-        marker = runtime / "plugins" / "installed-plugin.marker"
-        marker.write_text("preserve me\n")
-        (runtime / "plugins").chmod(0o755)
-
-        self.run_sync("harness")
-
-        self.assertEqual(marker.read_text(), "preserve me\n")
-        self.assertFalse((runtime / "plugins").is_symlink())
-        self.assertEqual((runtime / "plugins").stat().st_mode & 0o777, 0o700)
-
-    def legacy_harness_preserves_only_better_harness_registration(self) -> None:
-        runtime = self.run_sync("harness")
-        config = runtime / "config.toml"
-        config.write_text(
-            config.read_text().rstrip()
-            + """
-
-[marketplaces.better-harness]
-source_type = "git"
-source = "https://github.com/QoderAI/better-harness.git"
-ref = "audited-commit"
-
-[plugins."better-harness@better-harness"]
-enabled = true
-
-[marketplaces.unrelated]
-source_type = "git"
-source = "https://example.invalid/unrelated.git"
-
-[plugins."unrelated@unrelated"]
-enabled = true
-
-[mcp_servers.runtime-only]
-url = "https://example.invalid/runtime-mcp"
-"""
-        )
-
-        self.run_sync("harness")
-        first = config.read_text()
-        self.run_sync("harness")
-        repeated = config.read_text()
-
-        self.assertEqual(repeated, first)
-        self.assertEqual(first.count("[marketplaces.better-harness]"), 1)
-        self.assertEqual(first.count('[plugins."better-harness@better-harness"]'), 1)
-        self.assertIn('ref = "audited-commit"', first)
-        self.assertIn("enabled = true", first)
-        self.assertNotIn("marketplaces.unrelated", first)
-        self.assertNotIn('plugins."unrelated@unrelated"', first)
-        self.assertNotIn("mcp_servers.", first)
-        self.assertIn("[agents]\nenabled = false", first)
-        self.assertIn("multi_agent = false", first)
-        self.assertIn("multi_agent_v2 = false", first)
-        self.assertEqual((runtime / "plugins").stat().st_mode & 0o777, 0o700)
-
-    def legacy_harness_sync_does_not_synthesize_registration(self) -> None:
-        runtime = self.run_sync("harness")
-        config = (runtime / "config.toml").read_text()
-
-        self.assertNotIn("[marketplaces.better-harness]", config)
-        self.assertNotIn('[plugins."better-harness@better-harness"]', config)
-
-    def legacy_fresh_config_registration_takes_precedence_without_duplication(self) -> None:
-        canonical_config = self.canonical / "config.toml"
-        canonical_config.write_text(
-            canonical_config.read_text().rstrip()
-            + """
-
-[marketplaces.better-harness]
-source_type = "git"
-source = "https://example.invalid/canonical.git"
-
-[plugins."better-harness@better-harness"]
-enabled = false
-"""
-        )
-        runtime = self.root / ".runtime" / "harness"
-        runtime.mkdir(parents=True)
-        (runtime / "config.toml").write_text(
-            """[marketplaces.better-harness]
-source_type = "git"
-source = "https://example.invalid/stale.git"
-
-[plugins."better-harness@better-harness"]
-enabled = true
-"""
-        )
-
-        self.run_sync("harness")
-
-        generated = (runtime / "config.toml").read_text()
-        self.assertEqual(generated.count("[marketplaces.better-harness]"), 1)
-        self.assertEqual(generated.count('[plugins."better-harness@better-harness"]'), 1)
-        self.assertIn('source = "https://example.invalid/canonical.git"', generated)
-        self.assertNotIn("stale.git", generated)
-
-    def legacy_other_role_does_not_preserve_better_harness_registration(self) -> None:
-        runtime = self.run_sync("lead")
-        config = runtime / "config.toml"
-        config.write_text(
-            config.read_text().rstrip()
-            + """
-
-[marketplaces.better-harness]
-source_type = "git"
-source = "https://github.com/QoderAI/better-harness.git"
-
-[plugins."better-harness@better-harness"]
-enabled = true
-"""
-        )
-
-        self.run_sync("lead")
-
-        regenerated = config.read_text()
-        self.assertNotIn("[marketplaces.better-harness]", regenerated)
-        self.assertNotIn('[plugins."better-harness@better-harness"]', regenerated)
-
 
 if __name__ == "__main__":
     unittest.main()

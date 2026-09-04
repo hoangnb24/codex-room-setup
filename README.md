@@ -35,7 +35,7 @@ The `home/` directory mirrors `$HOME`:
 
 Prerequisites:
 
-- macOS or a Unix-like environment with Bash, Python 3, Git, Node, npm, and jq.
+- macOS or a Unix-like environment with Bash, Python 3.11, Git, Node, npm, and jq.
 - Codex installed and authenticated.
 - `~/.local/bin` on `PATH`.
 

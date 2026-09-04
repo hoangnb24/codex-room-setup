@@ -47,7 +47,10 @@ case "$role" in
   *) echo "unknown role: $role" >&2; exit 2 ;;
 esac
 
+role_home="${runtime_root}/${role}"
+[[ ! -L "$role_home" ]] || { echo "runtime role directory must not be a symlink: $role_home" >&2; exit 2; }
 "${sync_bin}" "${role}"
-export CODEX_HOME="${runtime_root}/${role}"
+[[ ! -L "$role_home" ]] || { echo "runtime role directory became a symlink: $role_home" >&2; exit 2; }
+export CODEX_HOME="$role_home"
 codex_bin="${CODEX_BIN:-$(command -v codex)}"
 exec "${codex_bin}" "$@"

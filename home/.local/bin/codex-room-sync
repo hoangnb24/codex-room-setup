@@ -193,6 +193,8 @@ def main() -> None:
     paths = deployment_paths()
     runtime_root = paths["runtime"]
     runtime = runtime_root / role
+    if runtime.is_symlink():
+        raise SystemExit(f"runtime role directory must not be a symlink: {runtime}")
     base = paths["base"].read_text()
     overlay = (paths["overlays"] / ROLE_FILES[role]).read_text()
     catalog_content = prepare_catalog()

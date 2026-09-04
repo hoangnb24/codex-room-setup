@@ -36,17 +36,34 @@ if [[ "$mode" == source ]]; then
   workflow_root="$REPO_ROOT/home/.config/codex-room/workflow"
   sync_path="$REPO_ROOT/home/.local/bin/codex-room-sync"
   launcher_path="$REPO_ROOT/home/.local/bin/codex-room"
+  obsolete_paths=(
+    "$overlays_root/review.config.toml"
+    "$overlays_root/harness.config.toml"
+    "$REPO_ROOT/home/.config/codex-room/paseo.phase2-coexist.candidate.json.template"
+    "$REPO_ROOT/home/.config/codex-room/paseo.phase2-hard-cut.candidate.json.template"
+    "$REPO_ROOT/home/.local/bin/codex-room-hard-cut"
+    "$REPO_ROOT/home/.local/bin/codex-review-apply"
+  )
 else
   config_template="$HOME/.paseo/config.json"
   overlays_root="$HOME/.config/codex-room/overlays"
   workflow_root="$HOME/.config/codex-room/workflow"
   sync_path="$HOME/.local/bin/codex-room-sync"
   launcher_path="$HOME/.local/bin/codex-room"
+  obsolete_paths=(
+    "$overlays_root/review.config.toml"
+    "$overlays_root/harness.config.toml"
+    "$HOME/.config/codex-room/paseo.phase2-coexist.candidate.json"
+    "$HOME/.config/codex-room/paseo.phase2-hard-cut.candidate.json"
+    "$HOME/.local/bin/codex-room-hard-cut"
+    "$HOME/.local/bin/codex-review-apply"
+  )
 fi
 
 check "Paseo config exists" test -f "$config_template"
 check "Paseo config is valid JSON" jq -e . "$config_template"
 check "room sync exists" test -f "$sync_path"
+check "room launcher is executable" test -x "$launcher_path"
 check "workspace protocol exists" test -f "$workflow_root/WORKSPACE_PROTOCOL.md"
 check "workflow pilot reporter is executable" test -x "$REPO_ROOT/scripts/workflow-pilot-report"
 check "Paseo provenance manifest exists" test -f "$REPO_ROOT/paseo/source.toml"
@@ -54,10 +71,12 @@ check "Paseo provenance manifest exists" test -f "$REPO_ROOT/paseo/source.toml"
 for role in supervisor lead peer; do
   check "$role overlay exists" test -f "$overlays_root/$role.config.toml"
 done
-check "Review overlay is inactive" test ! -e "$overlays_root/review.config.toml"
-check "Harness overlay is inactive" test ! -e "$overlays_root/harness.config.toml"
-check "Review helper is unaddressable" test ! -e "$(dirname "$launcher_path")/codex-review-apply"
-check "legacy hard-cut helper is unaddressable" test ! -e "$(dirname "$launcher_path")/codex-room-hard-cut"
+path_is_absent() {
+  [[ ! -e "$1" && ! -L "$1" ]]
+}
+for obsolete_path in "${obsolete_paths[@]}"; do
+  check "obsolete path is inactive: $obsolete_path" path_is_absent "$obsolete_path"
+done
 
 rejects_legacy_evidence_role() {
   ! "$launcher_path" --resolve-evidence-home "$1" >/dev/null 2>&1
@@ -84,6 +103,24 @@ check "exact MCP injection boundary" jq -e '
 ' "$config_template"
 
 if [[ "$mode" == installed ]]; then
+  toml_python="${CODEX_ROOM_TOML_PYTHON:-python3.11}"
+  require_command "$toml_python"
+  runtime_policy_disabled() {
+    "$toml_python" - "$1" <<'PY'
+import pathlib
+import sys
+import tomllib
+
+with pathlib.Path(sys.argv[1]).open("rb") as stream:
+    config = tomllib.load(stream)
+
+if config.get("agents", {}).get("enabled") is not False:
+    raise SystemExit(1)
+features = config.get("features", {})
+if features.get("multi_agent") is not False or features.get("multi_agent_v2") is not False:
+    raise SystemExit(1)
+PY
+  }
   paseo_checkout="${PASEO_REPO_DIR:-$HOME/projects/supervisors/paseo}"
   expected_paseo_cli="$paseo_checkout/packages/cli/bin/paseo"
   check "Paseo CLI links to local fork" test \
@@ -104,13 +141,11 @@ if [[ "$mode" == installed ]]; then
     check "$role native agent catalog" test -f "$runtime/model-catalog.no-native-agents.json"
     if [[ -f "$runtime/model-catalog.no-native-agents.json" ]]; then
       check "$role model agent metadata disabled" jq -e \
-        'all(.models[]; .multi_agent_version == null)' \
+        '.models | type == "array" and length > 0 and all(.[]; .multi_agent_version == null)' \
         "$runtime/model-catalog.no-native-agents.json"
     fi
     if [[ -f "$runtime/config.toml" ]]; then
-      check "$role agents disabled" grep -Eq '^enabled = false$' "$runtime/config.toml"
-      check "$role multi_agent disabled" grep -Eq '^multi_agent = false$' "$runtime/config.toml"
-      check "$role multi_agent_v2 disabled" grep -Eq '^multi_agent_v2 = false$' "$runtime/config.toml"
+      check "$role native-agent policy disabled" runtime_policy_disabled "$runtime/config.toml"
     fi
     check "$role plugins use canonical symlink" test \
       "$(readlink "$runtime/plugins" 2>/dev/null || true)" = "$HOME/.codex/plugins"
