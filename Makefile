@@ -1,4 +1,4 @@
-.PHONY: doctor test verify install sync snapshots
+.PHONY: doctor test test-container verify install sync snapshots
 
 doctor:
 	./scripts/doctor
@@ -10,6 +10,9 @@ test:
 		head -n 1 "$$script" | grep -Eq '(bash|zsh|sh)' || continue; \
 		bash -n "$$script" 2>/dev/null || zsh -n "$$script"; \
 	done
+
+test-container:
+	./tests/container/run
 
 verify:
 	./scripts/verify --source

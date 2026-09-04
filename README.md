@@ -55,6 +55,29 @@ or authenticate Codex, or build Paseo Desktop. The lower-level `install`,
 `install-paseo-fork`, `sync-all`, and `verify` commands remain available for
 targeted maintenance.
 
+## Disposable container acceptance test
+
+With Docker available, one command exercises the real bootstrap twice against
+a fresh, fake operator home:
+
+```bash
+make test-container
+```
+
+The test uses a digest-pinned Node 22 base with Debian's Python 3.11, mounts
+this checkout read-only, and supplies `tests/fixtures/model-catalog.json` so it
+does not need Codex API authentication. It downloads the pinned Paseo source
+and npm dependencies (excluding untested Electron/Playwright GUI binaries),
+but never mounts or copies the host's `~/.codex`, auth,
+sessions, plugins, or other operator data. A successful run prints the exact
+Codex role inventory, Paseo MCP recipients, runtime tree, and
+`CONTAINER_ACCEPTANCE_OK`.
+
+This Linux container proves the installer topology, legacy-role rejection,
+repeatability, and preservation boundaries. It does not prove Paseo Desktop or
+GUI behavior, macOS signing/TCC/application restart, or a live Paseo daemon or
+Codex session.
+
 The Paseo source manifest pins an immutable commit. Bootstrap preflights Paseo
 in a disposable location before changing live state. Paseo uses
 `npm ci` and refuses custom Git hooks because its audited `prepare` lifecycle

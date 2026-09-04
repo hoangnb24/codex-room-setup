@@ -1,0 +1,130 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+readonly source_root=/workspace
+readonly acceptance_root=/acceptance
+readonly fake_home=$acceptance_root/home
+readonly fake_bin=$acceptance_root/bin
+readonly fixture=$source_root/tests/fixtures/model-catalog.json
+readonly paseo_checkout=$fake_home/projects/supervisors/paseo
+
+fail() {
+  printf 'CONTAINER_ACCEPTANCE_FAIL: %s\n' "$*" >&2
+  exit 1
+}
+
+rejects() {
+  "$@" >/dev/null 2>&1 && fail "command unexpectedly succeeded: $*"
+  return 0
+}
+
+[[ "$(node --version)" == v22.* ]] || fail "container must provide Node 22"
+[[ "$(python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')" == 3.11 ]] || fail "container must provide Python 3.11"
+[[ -f "$fixture" ]] || fail "model catalog fixture is missing"
+rejects touch "$source_root/.container-write-probe"
+
+mkdir -p \
+  "$fake_bin" \
+  "$fake_home/.codex/plugins" \
+  "$fake_home/.codex/skills" \
+  "$fake_home/.codex-runtime/review" \
+  "$fake_home/.codex-runtime/harness"
+
+cat >"$fake_bin/codex" <<'EOF'
+#!/bin/sh
+exit 0
+EOF
+chmod 0755 "$fake_bin/codex"
+
+cat >"$fake_bin/verify-installed" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+target="${PASEO_REPO_DIR:-$HOME/projects/supervisors/paseo}"
+git -C "$target" remote set-url origin git@github.com:hoangnb24/paseo.git
+git -C "$target" remote set-url upstream git@github.com:getpaseo/paseo.git
+restore_https() {
+  git -C "$target" remote set-url origin https://github.com/hoangnb24/paseo.git
+  git -C "$target" remote set-url upstream https://github.com/getpaseo/paseo.git
+}
+trap restore_https EXIT
+/workspace/scripts/verify "$@"
+EOF
+chmod 0755 "$fake_bin/verify-installed"
+
+cat >"$fake_home/.codex/config.toml" <<'EOF'
+model = "operator-model"
+
+[mcp_servers.operator-owned]
+command = "operator-owned-command"
+EOF
+printf '%s\n' 'fake-auth-precondition' >"$fake_home/.codex/auth.json"
+printf '%s\n' 'operator-agent-marker' >"$fake_home/.codex/AGENTS.md"
+printf '%s\n' '{"operator":"hooks-marker"}' >"$fake_home/.codex/hooks.json"
+printf '%s\n' 'operator-plugin-marker' >"$fake_home/.codex/plugins/operator.marker"
+printf '%s\n' 'operator-skill-marker' >"$fake_home/.codex/skills/operator.marker"
+printf '%s\n' 'legacy-review-runtime-marker' >"$fake_home/.codex-runtime/review/operator.marker"
+printf '%s\n' 'legacy-harness-runtime-marker' >"$fake_home/.codex-runtime/harness/operator.marker"
+
+preserved_markers=(
+  "$fake_home/.codex/config.toml"
+  "$fake_home/.codex/auth.json"
+  "$fake_home/.codex/AGENTS.md"
+  "$fake_home/.codex/hooks.json"
+  "$fake_home/.codex/plugins/operator.marker"
+  "$fake_home/.codex/skills/operator.marker"
+  "$fake_home/.codex-runtime/review/operator.marker"
+  "$fake_home/.codex-runtime/harness/operator.marker"
+)
+before_hashes=$(sha256sum "${preserved_markers[@]}")
+
+export HOME="$fake_home"
+export PATH="$fake_bin:$fake_home/.local/bin:$PATH"
+export CODEX_ROOM_MODEL_CATALOG="$fixture"
+export PASEO_FORK_URL=https://github.com/hoangnb24/paseo.git
+export PASEO_UPSTREAM_URL=https://github.com/getpaseo/paseo.git
+export CODEX_ROOM_VERIFY_BIN="$fake_bin/verify-installed"
+export npm_config_audit=false
+export npm_config_fund=false
+export npm_config_update_notifier=false
+export ELECTRON_SKIP_BINARY_DOWNLOAD=1
+export PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
+
+for pass in fresh repeated; do
+  "$source_root/scripts/bootstrap" --apply
+  printf 'BOOTSTRAP_PASS %s\n' "$pass"
+done
+
+after_hashes=$(sha256sum "${preserved_markers[@]}")
+[[ "$after_hashes" == "$before_hashes" ]] || fail "operator or legacy marker bytes changed"
+
+mapfile -t roles < <(find "$fake_home/.codex-runtime" -mindepth 1 -maxdepth 1 -type d \
+  ! -name review ! -name harness -printf '%f\n' | LC_ALL=C sort)
+[[ "${roles[*]}" == "lead peer supervisor" ]] || fail "active runtime roles are not exactly lead peer supervisor: ${roles[*]}"
+
+for role in supervisor lead peer; do
+  runtime="$fake_home/.codex-runtime/$role"
+  [[ -f "$runtime/config.toml" ]] || fail "$role config was not generated"
+  [[ -f "$runtime/model-catalog.no-native-agents.json" ]] || fail "$role catalog was not generated"
+done
+
+paseo_config="$fake_home/.paseo/config.json"
+provider_inventory=$(jq -c '[.agents.providers | keys[] | select(startswith("codex-"))] | sort' "$paseo_config")
+mcp_inventory=$(jq -c '.daemon.mcp.injectIntoProviders' "$paseo_config")
+[[ "$provider_inventory" == '["codex-lead","codex-peer","codex-supervisor"]' ]] || fail "unexpected Codex provider inventory: $provider_inventory"
+[[ "$mcp_inventory" == '["codex-supervisor","codex-lead"]' ]] || fail "unexpected MCP recipients: $mcp_inventory"
+
+for legacy_role in review harness; do
+  rejects "$fake_home/.local/bin/codex-room" "$legacy_role"
+  rejects "$fake_home/.local/bin/codex-room-sync" "$legacy_role"
+done
+
+[[ "$(git -C "$paseo_checkout" rev-parse HEAD)" == 8511089eaeb06cddd049b629562926822020de5c ]] || fail "Paseo checkout is not at the audited commit"
+
+printf 'ROLE_INVENTORY %s\n' "$provider_inventory"
+printf 'MCP_RECIPIENTS %s\n' "$mcp_inventory"
+printf 'RUNTIME_TREE\n'
+find "$fake_home/.codex-runtime" -mindepth 1 -maxdepth 2 -printf '%P [%y]\n' | LC_ALL=C sort
+printf 'CONTAINER_ACCEPTANCE_OK node=%s python=%s paseo=%s\n' \
+  "$(node --version)" \
+  "$(python3 --version | awk '{print $2}')" \
+  "$(git -C "$paseo_checkout" rev-parse HEAD)"
