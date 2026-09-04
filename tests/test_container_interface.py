@@ -42,6 +42,23 @@ class ContainerAcceptanceInterfaceTests(unittest.TestCase):
             with self.subTest(signal=signal):
                 self.assertIn(signal, self.accept)
 
+    def test_installed_launcher_addresses_every_retained_role(self) -> None:
+        self.assertRegex(
+            self.accept,
+            r'for role in supervisor lead peer; do\n  if ! "\$fake_home/\.local/bin/codex-room" "\$role"; then',
+        )
+        self.assertIn("installed launcher failed for retained role", self.accept)
+        self.assertIn('mapfile -t launched_roles <"$CODEX_LAUNCH_LOG"', self.accept)
+        self.assertIn("installed launcher did not address each retained role exactly once", self.accept)
+
+    def test_paseo_commit_comes_from_the_authoritative_manifest(self) -> None:
+        self.assertRegex(
+            self.accept,
+            r"expected_paseo_commit=\$\(awk .* \"\$source_root/paseo/source\.toml\"\)",
+        )
+        self.assertIn("verified_commit is missing or malformed", self.accept)
+        self.assertNotRegex(self.accept, r"\b8511089eaeb06cddd049b629562926822020de5c\b")
+
 
 if __name__ == "__main__":
     unittest.main()
