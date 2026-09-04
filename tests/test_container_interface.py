@@ -48,8 +48,12 @@ class ContainerAcceptanceInterfaceTests(unittest.TestCase):
             r'for role in supervisor lead peer; do\n  if ! "\$fake_home/\.local/bin/codex-room" "\$role"; then',
         )
         self.assertIn("installed launcher failed for retained role", self.accept)
-        self.assertIn('mapfile -t launched_roles <"$CODEX_LAUNCH_LOG"', self.accept)
-        self.assertIn("installed launcher did not address each retained role exactly once", self.accept)
+        self.assertIn('printf \'%s\\n\' "$role_home"', self.accept)
+        self.assertIn('mapfile -t launched_homes <"$CODEX_LAUNCH_LOG"', self.accept)
+        self.assertIn('"$fake_home/.codex-runtime/supervisor"', self.accept)
+        self.assertIn('"$fake_home/.codex-runtime/lead"', self.accept)
+        self.assertIn('"$fake_home/.codex-runtime/peer"', self.accept)
+        self.assertIn("installed launcher did not address each expected retained CODEX_HOME exactly once", self.accept)
 
     def test_paseo_commit_comes_from_the_authoritative_manifest(self) -> None:
         self.assertRegex(

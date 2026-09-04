@@ -33,12 +33,13 @@ mkdir -p \
 cat >"$fake_bin/codex" <<'EOF'
 #!/bin/sh
 set -eu
-role=${CODEX_HOME##*/}
+role_home=${CODEX_HOME:?CODEX_HOME is required}
+role=${role_home##*/}
 case "$role" in
   supervisor|lead|peer) ;;
-  *) echo "fake codex received unexpected CODEX_HOME: ${CODEX_HOME:-unset}" >&2; exit 1 ;;
+  *) echo "fake codex received unexpected CODEX_HOME: $role_home" >&2; exit 1 ;;
 esac
-printf '%s\n' "$role" >>"${CODEX_LAUNCH_LOG:?CODEX_LAUNCH_LOG is required}"
+printf '%s\n' "$role_home" >>"${CODEX_LAUNCH_LOG:?CODEX_LAUNCH_LOG is required}"
 EOF
 chmod 0755 "$fake_bin/codex"
 
@@ -130,8 +131,13 @@ for role in supervisor lead peer; do
     fail "installed launcher failed for retained role: $role"
   fi
 done
-mapfile -t launched_roles <"$CODEX_LAUNCH_LOG"
-[[ "${launched_roles[*]}" == "supervisor lead peer" ]] || fail "installed launcher did not address each retained role exactly once: ${launched_roles[*]}"
+mapfile -t launched_homes <"$CODEX_LAUNCH_LOG"
+expected_launched_homes=(
+  "$fake_home/.codex-runtime/supervisor"
+  "$fake_home/.codex-runtime/lead"
+  "$fake_home/.codex-runtime/peer"
+)
+[[ "${launched_homes[*]}" == "${expected_launched_homes[*]}" ]] || fail "installed launcher did not address each expected retained CODEX_HOME exactly once: ${launched_homes[*]}"
 
 expected_paseo_commit=$(awk -F'"' '/^verified_commit = / {print $2; exit}' "$source_root/paseo/source.toml")
 [[ "$expected_paseo_commit" =~ ^[0-9a-f]{40}$ ]] || fail "paseo/source.toml verified_commit is missing or malformed"
