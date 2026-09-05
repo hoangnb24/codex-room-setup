@@ -1,0 +1,202 @@
+{
+  "version": 1,
+  "daemon": {
+    "listen": "127.0.0.1:6767",
+    "mcp": {
+      "injectIntoAgents": true,
+      "enabled": true,
+      "injectIntoProviders": [
+        "codex-root",
+        "codex-supervisor",
+        "codex-room-supervisor",
+        "codex-lead"
+      ]
+    },
+    "browserTools": {
+      "enabled": false
+    },
+    "autoArchiveAfterMerge": false,
+    "enableTerminalAgentHooks": false,
+    "appendSystemPrompt": "",
+    "terminalProfiles": [
+      {
+        "id": "codex",
+        "name": "Codex",
+        "command": "codex",
+        "icon": "codex"
+      },
+      {
+        "id": "claude",
+        "name": "Claude Code",
+        "command": "claude",
+        "icon": "claude"
+      },
+      {
+        "id": "opencode",
+        "name": "OpenCode",
+        "command": "opencode",
+        "icon": "opencode"
+      }
+    ],
+    "cors": {
+      "allowedOrigins": [
+        "https://app.paseo.sh"
+      ]
+    },
+    "relay": {
+      "enabled": true
+    }
+  },
+  "app": {
+    "baseUrl": "https://app.paseo.sh"
+  },
+  "agents": {
+    "providers": {
+      "codex-root": {
+        "extends": "codex",
+        "label": "Codex Root",
+        "description": "Portfolio-level orchestrator for Khuym's multi-project workspace.",
+        "command": [
+          "codex",
+          "-c",
+          "sandbox_mode=\"read-only\"",
+          "-c",
+          "approval_policy=\"never\"",
+          "-c",
+          "agents.enabled=false",
+          "-c",
+          "developer_instructions=\"You are Khuym Root, the portfolio-level Paseo orchestrator and the user's Chief of Staff. Use Paseo as the only orchestration plane. Route project work through codex-supervisor agents; do not directly manage Peers except for a recorded bounded audit or recovery. Keep projects isolated and own cross-project contracts and final acceptance. Treat anti-pattern findings as evidence-backed hypotheses with open questions, not verdicts. Require the Supervisor to collect Peer reactions, reconcile contested evidence, and preserve unresolved disagreement. Decide ACCEPT, REVISE, or WAIT from actual artifacts and independently checked evidence.\""
+        ],
+        "env": {}
+      },
+      "codex-supervisor": {
+        "extends": "codex",
+        "label": "Codex Supervisor",
+        "description": "Project-scoped supervisor that coordinates Peers through Paseo.",
+        "command": [
+          "codex",
+          "-c",
+          "sandbox_mode=\"read-only\"",
+          "-c",
+          "approval_policy=\"never\"",
+          "-c",
+          "agents.enabled=false",
+          "-c",
+          "developer_instructions=\"You are a project-scoped Supervisor managed by Khuym Root. Use Paseo as the only orchestration plane. Create and manage codex-peer agents only inside the assigned project and workspaces. Own project decomposition, monitoring, review, verification, anti-pattern detection, reaction reconciliation, and structured handoff. Treat Root findings as hypotheses. Require Peers to react CONFIRM, PARTIAL, CHALLENGE, or BLOCK with evidence; independently reconcile as UPHOLD, NARROW, DISMISS, or ESCALATE before correction. A challenge is not disobedience. After two correction rounds in one finding family, pause and test for a shared root mechanism. Escalate cross-project, product, portfolio, architecture-contract, deployment, and scope-expansion decisions to Root.\""
+        ],
+        "env": {}
+      },
+      "codex-peer": {
+        "extends": "codex",
+        "label": "Codex Peer",
+        "description": "Bounded engineering worker, reviewer, researcher, or architect.",
+        "command": [
+          "codex",
+          "-c",
+          "sandbox_mode=\"workspace-write\"",
+          "-c",
+          "approval_policy=\"on-request\"",
+          "-c",
+          "agents.enabled=false",
+          "-c",
+          "developer_instructions=\"You are a project Peer assigned one bounded task. Work only in the assigned project, workspace, and ownership scope; preserve unrelated changes. Do not use Paseo orchestration tools or manage agents even if visible. Form an independent technical judgment and challenge incorrect assumptions with inspectable evidence. For an anti-pattern finding, react CONFIRM, PARTIAL, CHALLENGE, or BLOCK and explain the mechanism. You may propose scope expansion or foundation redesign but must not execute it without authorization. Agreement is not required; opposition without evidence is not independence. Perform only authorized actions, verify the result, and return a structured handoff including finding reaction evidence when applicable.\""
+        ],
+        "env": {}
+      },
+      "grok": {
+        "extends": "acp",
+        "label": "Grok",
+        "description": "xAI's Grok Build agentic coding CLI with plan mode and parallel subagents. Requires a SuperGrok or X Premium+ subscription.",
+        "command": [
+          "grok",
+          "agent",
+          "stdio"
+        ],
+        "env": {}
+      },
+      "pi": {
+        "enabled": false
+      },
+      "opencode": {
+        "enabled": false
+      },
+      "copilot": {
+        "enabled": false
+      },
+      "hermes": {
+        "extends": "acp",
+        "label": "Hermes",
+        "description": "Nous Research self-improving AI agent",
+        "command": [
+          "hermes",
+          "acp"
+        ],
+        "env": {}
+      },
+      "codex-room-supervisor": {
+        "extends": "codex",
+        "label": "Codex Room Supervisor",
+        "description": "Portfolio governance seat using isolated Codex Room runtime",
+        "command": [
+          "@@HOME@@/.local/bin/codex-room",
+          "supervisor"
+        ],
+        "models": [
+          {
+            "id": "gpt-5.6-sol",
+            "label": "Sol",
+            "isDefault": true
+          }
+        ]
+      },
+      "codex-lead": {
+        "extends": "codex",
+        "label": "Codex Lead",
+        "description": "Project technical authority using isolated Codex Room runtime",
+        "command": [
+          "@@HOME@@/.local/bin/codex-room",
+          "lead"
+        ],
+        "models": [
+          {
+            "id": "gpt-5.6-sol",
+            "label": "Sol",
+            "isDefault": true
+          }
+        ]
+      },
+      "codex-room-peer": {
+        "extends": "codex",
+        "label": "Codex Room Peer",
+        "description": "Bounded engineering seat without Paseo orchestration tools",
+        "command": [
+          "@@HOME@@/.local/bin/codex-room",
+          "peer"
+        ],
+        "models": [
+          {
+            "id": "gpt-5.6-sol",
+            "label": "Sol",
+            "isDefault": true
+          },
+          {
+            "id": "gpt-5.6-terra",
+            "label": "Terra"
+          },
+          {
+            "id": "gpt-5.6-luna",
+            "label": "Luna"
+          }
+        ]
+      }
+    }
+  },
+  "features": {
+    "dictation": {
+      "enabled": false
+    },
+    "voiceMode": {
+      "enabled": false
+    }
+  }
+}

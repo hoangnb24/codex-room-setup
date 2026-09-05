@@ -13,6 +13,7 @@ verified_commit="${PASEO_VERIFIED_COMMIT:-$(awk -F'"' '/^verified_commit = / {pr
 cli_entrypoint="${PASEO_CLI_ENTRYPOINT:-packages/cli/bin/paseo}"
 cli_link="${PASEO_CLI_LINK:-$HOME/.local/bin/paseo}"
 npm_bin="${PASEO_NPM_BIN:-npm}"
+coordinator_managed="${PASEO_COORDINATOR_MANAGED:-0}"
 require_command git
 require_command "$npm_bin"
 [[ "$verified_commit" =~ ^[0-9a-f]{40}$ ]] || die "invalid audited Paseo commit: $verified_commit"
@@ -29,9 +30,18 @@ check_hooks() {
   done
 }
 
+check_mutable_links() {
+  local repo="$1" metadata_link
+  [[ ! -L "$repo/.git" ]] || die "Paseo .git directory is a redirecting link"
+  metadata_link=$(find "$repo/.git" -type l -print -quit 2>/dev/null || true)
+  [[ -z "$metadata_link" ]] || die "Paseo Git metadata contains a redirecting link: $metadata_link"
+  [[ ! -L "$repo/node_modules" ]] || die "Paseo node_modules root is a redirecting link"
+}
+
 npm_ci_checked() {
   local repo="$1" before after hook lock_backup
   [[ -f "$repo/package-lock.json" ]] || die "Paseo package-lock.json is missing"
+  check_mutable_links "$repo"
   check_hooks "$repo"
   before=$(sha256_file "$repo/package-lock.json")
   lock_backup=$(mktemp "${TMPDIR:-/tmp}/paseo-lock.XXXXXX")
@@ -124,6 +134,10 @@ fi
 publish_cli_link() {
   local cli_target="$target/$cli_entrypoint" backup_root
   [[ -f "$cli_target" ]] || die "Paseo CLI entrypoint is missing: $cli_target"
+  # The public coordinator snapshots and publishes this managed link as part
+  # of its one transaction. Do not create the historical independent backup
+  # or publication side effect when it owns the lifecycle.
+  [[ "$coordinator_managed" == 1 ]] && return 0
   mkdir -p "$(dirname "$cli_link")"
   if [[ -e "$cli_link" || -L "$cli_link" ]]; then
     if [[ -L "$cli_link" && "$(readlink "$cli_link")" == "$cli_target" ]]; then return; fi

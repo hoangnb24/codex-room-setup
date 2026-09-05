@@ -4,9 +4,11 @@ import json
 import os
 from pathlib import Path
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 import re
 
@@ -1061,6 +1063,166 @@ class PublicInstallTransactionTests(unittest.TestCase):
         self.assertEqual(runtime_root.stat().st_mode & 0o777, 0o755)
         for role in ("supervisor", "lead", "peer"):
             self.assertEqual((runtime_root / role).stat().st_mode & 0o777, 0o755)
+
+    def test_incomplete_paseo_checkout_snapshot_never_deletes_original(self) -> None:
+        paseo = self.make_fake_paseo()
+        verifier = self.make_fake_verifier()
+        env = self.lifecycle_env(paseo, verifier)
+        first = self.run_install(("--apply",), env)
+        self.assertEqual(first.returncode, 0, first.stdout + first.stderr)
+        checkout = self.home / "projects/supervisors/paseo"
+        marker = checkout / "operator-private.marker"
+        marker.write_bytes(b"private\x00")
+        os.mkfifo(checkout / "operator-pipe")
+        failed = self.run_install(("--apply",), env)
+        self.assertNotEqual(failed.returncode, 0)
+        self.assertTrue(checkout.is_dir())
+        self.assertEqual(marker.read_bytes(), b"private\x00")
+        self.assertTrue((checkout / "operator-pipe").is_fifo())
+        self.assertTrue((self.home / ".local/bin/paseo").is_symlink())
+
+    def test_incomplete_paseo_cli_snapshot_never_deletes_original_checkout(self) -> None:
+        paseo = self.make_fake_paseo()
+        verifier = self.make_fake_verifier()
+        env = self.lifecycle_env(paseo, verifier)
+        first = self.run_install(("--apply",), env)
+        self.assertEqual(first.returncode, 0, first.stdout + first.stderr)
+        checkout = self.home / "projects/supervisors/paseo"
+        marker = checkout / "operator-private.marker"
+        marker.write_bytes(b"private\x00")
+        cli = self.home / ".local/bin/paseo"
+        cli.unlink()
+        os.mkfifo(cli)
+        failed = self.run_install(("--apply",), env)
+        self.assertNotEqual(failed.returncode, 0)
+        self.assertTrue(checkout.is_dir())
+        self.assertEqual(marker.read_bytes(), b"private\x00")
+        self.assertTrue(cli.is_fifo())
+
+    def test_path_overrides_cannot_alias_protected_or_managed_state(self) -> None:
+        paseo = self.make_fake_paseo()
+        verifier = self.make_fake_verifier()
+        base = self.lifecycle_env(paseo, verifier)
+        aliases = (
+            {"PASEO_CLI_LINK": str(self.home / ".codex/auth.json")},
+            {"PASEO_REPO_DIR": str(self.home / ".codex/paseo")},
+            {"CODEX_ROOM_RUNTIME_ROOT": str(self.home / ".codex")},
+            {"CODEX_ROOM_BACKUP_ROOT": str(self.home / ".codex")},
+            {
+                "PASEO_REPO_DIR": str(self.home / ".local/bin/shared"),
+                "PASEO_CLI_LINK": str(self.home / ".local/bin/shared/paseo"),
+            },
+        )
+        for override in aliases:
+            with self.subTest(override=override):
+                failed = self.run_install(("--apply",), {**base, **override})
+                self.assertNotEqual(failed.returncode, 0, failed.stdout + failed.stderr)
+                self.assertEqual((self.home / ".codex/auth.json").read_text(), "operator\n")
+                self.assertFalse((self.home / ".paseo").exists())
+                self.assertFalse((self.home / "projects").exists())
+
+    def test_rendered_historical_phase2_files_are_retired(self) -> None:
+        for name in ("coexist", "hard-cut"):
+            source = ROOT / "paseo/legacy" / f"paseo.phase2-{name}.candidate.json.template"
+            destination = self.home / ".config/codex-room" / f"paseo.phase2-{name}.candidate.json"
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            destination.write_bytes(source.read_bytes().replace(b"@@HOME@@", str(self.home).encode()))
+            destination.chmod(0o600)
+        paseo = self.make_fake_paseo()
+        verifier = self.make_fake_verifier()
+        completed = self.run_install(("--apply",), self.lifecycle_env(paseo, verifier))
+        self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+        self.assertFalse((self.home / ".config/codex-room/paseo.phase2-coexist.candidate.json").exists())
+        self.assertFalse((self.home / ".config/codex-room/paseo.phase2-hard-cut.candidate.json").exists())
+
+    def test_external_checkout_metadata_link_fails_before_publish(self) -> None:
+        paseo = self.make_fake_paseo()
+        verifier = self.make_fake_verifier()
+        env = self.lifecycle_env(paseo, verifier)
+        first = self.run_install(("--apply",), env)
+        self.assertEqual(first.returncode, 0, first.stdout + first.stderr)
+        checkout = self.home / "projects/supervisors/paseo"
+        outside = self.root / "outside-hooks"
+        outside.mkdir()
+        (outside / "operator.marker").write_bytes(b"private\x00")
+        hooks = checkout / ".git/hooks"
+        shutil.rmtree(hooks)
+        hooks.symlink_to(outside, target_is_directory=True)
+        failed = self.run_install(("--apply",), env)
+        self.assertNotEqual(failed.returncode, 0)
+        self.assertTrue(hooks.is_symlink())
+        self.assertEqual((outside / "operator.marker").read_bytes(), b"private\x00")
+
+        hooks.unlink()
+        hooks.mkdir()
+        ancestor = self.root / "ancestor-target"
+        ancestor.symlink_to(checkout.parent, target_is_directory=True)
+        link = checkout / "workspace-ancestor"
+        link.symlink_to(ancestor, target_is_directory=True)
+        failed = self.run_install(("--apply",), env)
+        self.assertNotEqual(failed.returncode, 0)
+        self.assertTrue(link.is_symlink())
+
+    def test_sigint_settles_helper_process_group_before_rollback(self) -> None:
+        paseo = self.executable(
+            self.root / "interrupting-paseo",
+            "#!/bin/sh\n"
+            "set -eu\n"
+            "if [ \"${1:-}\" = --preflight ]; then exit 0; fi\n"
+            "mkdir -p \"$PASEO_REPO_DIR/packages/cli/bin\"\n"
+            "printf live > \"$PASEO_REPO_DIR/live-marker\"\n"
+            "printf '#!/bin/sh\\n' > \"$PASEO_REPO_DIR/packages/cli/bin/paseo\"\n"
+            "printf ready > \"$READY_MARKER\"\n"
+            "(trap 'exit 0' TERM INT; sleep 1; printf late > \"$LATE_MARKER\") &\n"
+            "trap 'exit 0' TERM INT\n"
+            "while :; do sleep 0.1; done\n",
+        )
+        verifier = self.make_fake_verifier()
+        ready = self.root / "ready"
+        late = self.root / "late"
+        env = {
+            **self.lifecycle_env(paseo, verifier),
+            "READY_MARKER": str(ready),
+            "LATE_MARKER": str(late),
+        }
+        process = subprocess.Popen(
+            [str(ROOT / "install"), "--apply"],
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        deadline = time.monotonic() + 20
+        while not ready.exists() and time.monotonic() < deadline:
+            time.sleep(0.05)
+        self.assertTrue(ready.exists(), "helper did not reach live mutation")
+        process.send_signal(signal.SIGINT)
+        stdout, stderr = process.communicate(timeout=15)
+        self.assertNotEqual(process.returncode, 0, stdout + stderr)
+        time.sleep(1.5)
+        self.assertFalse(late.exists(), "descendant wrote after rollback")
+        self.assertFalse((self.home / "projects").exists())
+        self.assertFalse((self.home / ".local/bin/paseo").exists())
+
+    def test_coordinator_owns_cli_backup_and_replaces_nonmatching_entry(self) -> None:
+        paseo = self.make_fake_paseo()
+        verifier = self.make_fake_verifier()
+        env = self.lifecycle_env(paseo, verifier)
+        first = self.run_install(("--apply",), env)
+        self.assertEqual(first.returncode, 0, first.stdout + first.stderr)
+        cli = self.home / ".local/bin/paseo"
+        cli.unlink()
+        cli.write_bytes(b"operator cli\n")
+        cli.chmod(0o640)
+        second = self.run_install(("--apply",), env)
+        self.assertEqual(second.returncode, 0, second.stdout + second.stderr)
+        backup = Path(next(line.split("backup=", 1)[1] for line in second.stdout.splitlines() if "backup=" in line))
+        saved = backup / "managed/paseo_cli"
+        self.assertEqual(saved.read_bytes(), b"operator cli\n")
+        self.assertEqual(saved.stat().st_mode & 0o777, 0o600)
+        self.assertEqual(backup.stat().st_mode & 0o777, 0o700)
+        self.assertFalse(any(path.name.startswith("paseo-cli-") for path in (self.home / ".codex-room-backups").iterdir()))
+        self.assertTrue(cli.is_symlink())
 
 
 class RuntimeGenerationTests(unittest.TestCase):

@@ -87,9 +87,16 @@ installs lefthook; updates are exact-pin/no-op or fast-forward-only and never
 silently pull from public upstream.
 
 The installer backs up every replaced managed file and the Paseo checkout under
-`~/.codex-room-backups/core3-<UTC timestamp>-<pid>/` with owner-only
-permissions. Customized obsolete files are preserved with a warning; only
+`~/.codex-room-backups/core3-<UTC timestamp>-<pid>-<nanoseconds>/` with
+owner-only permissions. The coordinator owns the CLI-link backup as part of
+the same transaction; the delegated Paseo helper does not create a second
+backup. Customized obsolete files are preserved with a warning; only
 recognized, unchanged legacy artifacts are retired after backup.
+
+If `Ctrl-C` or `SIGTERM` arrives during apply, the installer settles its
+owned helper process group and rolls back the published state. A power loss or
+`SIGKILL` can interrupt before rollback and remains an operating-system
+durability limit; inspect the restricted transaction backup before retrying.
 
 It never writes to `~/.codex`.
 

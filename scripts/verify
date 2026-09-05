@@ -98,15 +98,27 @@ preserved_obsolete_path() {
   actual_mode=$(stat -c '%a' "$1" 2>/dev/null || stat -f '%Lp' "$1")
   [[ "$actual_mode" == "$expected_mode" ]] || return 0
   digest=$(sha256_file "$1")
+  historical_rendered_digest() {
+    local template="$1"
+    python3 - "$template" "$HOME" <<'PY'
+import hashlib
+import pathlib
+import sys
+
+template = pathlib.Path(sys.argv[1]).read_bytes()
+home = sys.argv[2].encode()
+print(hashlib.sha256(template.replace(b"@@HOME@@", home)).hexdigest())
+PY
+  }
   case "${1#$HOME/}" in
     .config/codex-room/overlays/review.config.toml)
       [[ "$digest" != bd6658ce6fbd53a6904e41752f31493fea77ae76b974cde881dc254b89aa9e94 ]] ;;
     .config/codex-room/overlays/harness.config.toml)
       [[ "$digest" != f963efcd545237153ac33382c12930df97afc50b08712751f442e80c6f502889 ]] ;;
     .config/codex-room/paseo.phase2-coexist.candidate.json)
-      [[ "$digest" != 49f584972e095ddf2a99a56d58a2067d770d0fdcd6740aeaaacc6b9c7660b04 ]] ;;
+      [[ "$digest" != "$(historical_rendered_digest "$REPO_ROOT/paseo/legacy/paseo.phase2-coexist.candidate.json.template")" ]] ;;
     .config/codex-room/paseo.phase2-hard-cut.candidate.json)
-      [[ "$digest" != 2d164142a1cd902ebab53a416259fb290b462a176c066757f7ca346fe7f5c9ff ]] ;;
+      [[ "$digest" != "$(historical_rendered_digest "$REPO_ROOT/paseo/legacy/paseo.phase2-hard-cut.candidate.json.template")" ]] ;;
     .local/bin/codex-room-hard-cut)
       [[ "$digest" != 86efcfd46a25940353c889a938a8b901e9cd04e499a93287f7bda0696dbf041a ]] ;;
     .local/bin/codex-review-apply)
@@ -127,6 +139,11 @@ for obsolete_path in "${obsolete_paths[@]}"; do
 done
 
 if [[ "$mode" == source ]]; then
+  for historical_fixture in \
+    "$REPO_ROOT/paseo/legacy/paseo.phase2-coexist.candidate.json.template" \
+    "$REPO_ROOT/paseo/legacy/paseo.phase2-hard-cut.candidate.json.template"; do
+    check "historical rendered obsolete fixture exists: $historical_fixture" test -f "$historical_fixture"
+  done
   for retired_source in \
     "$workflow_root/ANTI_PATTERNS.md" \
     "$workflow_root/SUPERVISOR_NOTEBOOK.md" \
@@ -190,9 +207,10 @@ if features.get("multi_agent") is not False or features.get("multi_agent_v2") is
 PY
   }
   paseo_checkout="${PASEO_REPO_DIR:-$HOME/projects/supervisors/paseo}"
+  paseo_cli_link="${PASEO_CLI_LINK:-$HOME/.local/bin/paseo}"
   expected_paseo_cli="$paseo_checkout/packages/cli/bin/paseo"
   check "Paseo CLI links to local fork" test \
-    "$(readlink "$HOME/.local/bin/paseo" 2>/dev/null || true)" = "$expected_paseo_cli"
+    "$(readlink "$paseo_cli_link" 2>/dev/null || true)" = "$expected_paseo_cli"
   expected_paseo_commit=$(awk -F'"' '/^verified_commit = / {print $2}' "$REPO_ROOT/paseo/source.toml")
   expected_paseo_branch=$(awk -F'"' '/^branch = / {print $2; exit}' "$REPO_ROOT/paseo/source.toml")
   expected_paseo_fork=$(awk -F'"' '/^fork = / {print $2; exit}' "$REPO_ROOT/paseo/source.toml")
@@ -203,8 +221,9 @@ PY
   check "Paseo upstream is public" test "$(git -C "$paseo_checkout" remote get-url upstream 2>/dev/null || true)" = "$expected_paseo_upstream"
   check "Paseo branch tracks origin" test "$(git -C "$paseo_checkout" config --get "branch.$expected_paseo_branch.remote" 2>/dev/null || true)" = origin
   check "Paseo tracking ref" test "$(git -C "$paseo_checkout" config --get "branch.$expected_paseo_branch.merge" 2>/dev/null || true)" = "refs/heads/$expected_paseo_branch"
+  runtime_root="${CODEX_ROOM_RUNTIME_ROOT:-$HOME/.codex-runtime}"
   for role in supervisor lead peer; do
-    runtime="$HOME/.codex-runtime/$role"
+    runtime="$runtime_root/$role"
     check "$role runtime config" test -f "$runtime/config.toml"
     check "$role native agent catalog" test -f "$runtime/model-catalog.no-native-agents.json"
     if [[ -f "$runtime/model-catalog.no-native-agents.json" ]]; then
@@ -221,9 +240,10 @@ PY
 fi
 
 if [[ "$live" == true ]]; then
-  require_command paseo
+  paseo_command="${PASEO_COMMAND:-${PASEO_CLI_LINK:-paseo}}"
+  require_command "$paseo_command"
   inventory_file=$(mktemp "${TMPDIR:-/tmp}/codex-room-provider-check.XXXXXX")
-  if paseo provider ls --host 127.0.0.1:6767 --json >"$inventory_file" 2>/dev/null; then
+  if "$paseo_command" provider ls --host 127.0.0.1:6767 --json >"$inventory_file" 2>/dev/null; then
     check "exact live room provider inventory" jq -e '
       [.[].provider | select(startswith("codex-"))] | sort ==
       ["codex-lead", "codex-peer", "codex-supervisor"]

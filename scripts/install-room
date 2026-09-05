@@ -18,7 +18,9 @@ import stat
 import subprocess
 import sys
 import tempfile
+import threading
 import time
+import signal
 from typing import Iterable, Optional
 
 
@@ -27,25 +29,22 @@ HOME_MIRROR = ROOT / "home"
 SYNC_SOURCE = HOME_MIRROR / ".local" / "bin" / "codex-room-sync"
 VERIFY_SOURCE = ROOT / "scripts" / "verify"
 PASEO_SOURCE = ROOT / "scripts" / "install-paseo-fork"
+LEGACY_SOURCE_ROOT = ROOT / "paseo" / "legacy"
 
 ROLES = ("supervisor", "lead", "peer")
 
-# These are the artifacts that were managed by the five-role setup.  A path is
-# retired only when its bytes match a known repository version.  A customized
-# file, a private notebook, or any redirecting link is retained and called out
-# in the plan/result.
+# These are the artifacts that were managed by the five-role setup. A path is
+# retired only when its bytes match a known repository version. The two JSON
+# candidates were rendered with the operator HOME by the historical installer;
+# their immutable templates live in paseo/legacy so classification never needs
+# the repository's Git history. A customized file, private notebook, or
+# redirecting link is retained and called out in the plan/result.
 OBSOLETE_HASHES = {
     ".config/codex-room/overlays/review.config.toml": {
         "bd6658ce6fbd53a6904e41752f31493fea77ae76b974cde881dc254b89aa9e94",
     },
     ".config/codex-room/overlays/harness.config.toml": {
         "f963efcd545237153ac33382c12930df97afc50b08712751f442e80c6f502889",
-    },
-    ".config/codex-room/paseo.phase2-coexist.candidate.json": {
-        "49f584972e095ddf2a99a56d58a2067d770d0fdcd6740aeaaacc6b9c7660b04",
-    },
-    ".config/codex-room/paseo.phase2-hard-cut.candidate.json": {
-        "2d164142a1cd902ebab53a416259fb290b462a176c066757f7ca346fe7f5c9ff",
     },
     ".local/bin/codex-room-hard-cut": {
         "86efcfd46a25940353c889a938a8b901e9cd04e499a93287f7bda0696dbf041a",
@@ -59,6 +58,12 @@ OBSOLETE_HASHES = {
     ".config/codex-room/workflow/SUPERVISOR_NOTEBOOK.md": {
         "d644212642909ba20c4960503f89ef74b4897e39cf4096f5c9c1df2c686d430f",
     },
+}
+OBSOLETE_TEMPLATES = {
+    ".config/codex-room/paseo.phase2-coexist.candidate.json":
+        LEGACY_SOURCE_ROOT / "paseo.phase2-coexist.candidate.json.template",
+    ".config/codex-room/paseo.phase2-hard-cut.candidate.json":
+        LEGACY_SOURCE_ROOT / "paseo.phase2-hard-cut.candidate.json.template",
 }
 OBSOLETE_MODES = {
     ".config/codex-room/overlays/review.config.toml": 0o600,
@@ -89,6 +94,124 @@ ROOM_SHARED = ("model-instructions.md",)
 
 class InstallError(RuntimeError):
     """A fail-closed preflight or transaction error."""
+
+
+class InstallCancelled(InstallError):
+    """A cooperative SIGINT/SIGTERM reached the transaction boundary."""
+
+
+_CANCEL_REQUESTED = threading.Event()
+_CANCEL_SIGNAL: Optional[int] = None
+
+
+def request_cancel(signum: int, _frame: object) -> None:
+    """Record cancellation without interrupting a child while it is writing."""
+    global _CANCEL_SIGNAL
+    _CANCEL_SIGNAL = signum
+    _CANCEL_REQUESTED.set()
+
+
+def check_cancelled() -> None:
+    if _CANCEL_REQUESTED.is_set():
+        signal_name = signal.Signals(_CANCEL_SIGNAL).name if _CANCEL_SIGNAL else "signal"
+        raise InstallCancelled(f"installation cancelled by {signal_name}")
+
+
+def stop_owned_process(process: subprocess.Popen[str]) -> None:
+    """Stop a writing subprocess group and wait for every child to settle."""
+    def group_alive() -> bool:
+        if os.name != "posix":  # pragma: no cover
+            return process.poll() is None
+        try:
+            os.killpg(process.pid, 0)
+            return True
+        except (ProcessLookupError, OSError):
+            return False
+
+    try:
+        if os.name == "posix":
+            os.killpg(process.pid, signal.SIGTERM)
+        else:  # pragma: no cover - the lifecycle is currently POSIX-first
+            process.terminate()
+    except (ProcessLookupError, OSError):
+        pass
+    deadline = time.monotonic() + 5.0
+    while group_alive() and time.monotonic() < deadline:
+        try:
+            process.wait(timeout=0.1)
+        except subprocess.TimeoutExpired:
+            continue
+    if group_alive():
+        try:
+            if os.name == "posix":
+                os.killpg(process.pid, signal.SIGKILL)
+            else:  # pragma: no cover
+                process.kill()
+        except (ProcessLookupError, OSError):
+            pass
+    process.wait()
+    # A leader can exit on SIGTERM while a descendant still owns the process
+    # group. Give that descendant a bounded settle window before rollback.
+    settle_deadline = time.monotonic() + 2.0
+    while group_alive() and time.monotonic() < settle_deadline:
+        time.sleep(0.05)
+
+
+def run_owned(command: list[str], *, env: Optional[dict[str, str]] = None) -> subprocess.CompletedProcess[str]:
+    """Run a lifecycle child in its own process group with cancellation settling."""
+    check_cancelled()
+    process = subprocess.Popen(
+        command,
+        env=env,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        start_new_session=(os.name == "posix"),
+    )
+    cancelled = False
+    stdout = ""
+    stderr = ""
+    while True:
+        try:
+            stdout, stderr = process.communicate(timeout=0.2)
+            if _CANCEL_REQUESTED.is_set() and not cancelled:
+                # The leader may have exited while a descendant still owns
+                # the process group and its output pipe.
+                cancelled = True
+                stop_owned_process(process)
+                stdout, stderr = process.communicate()
+            break
+        except subprocess.TimeoutExpired:
+            if _CANCEL_REQUESTED.is_set() and not cancelled:
+                cancelled = True
+                stop_owned_process(process)
+                stdout, stderr = process.communicate()
+                break
+    if _CANCEL_REQUESTED.is_set() or cancelled:
+        if stdout:
+            sys.stdout.write(stdout)
+        if stderr:
+            sys.stderr.write(stderr)
+        check_cancelled()
+    return subprocess.CompletedProcess(command, process.returncode, stdout, stderr)
+
+
+class CancellationHandlers:
+    """Install cooperative handlers only for the apply transaction."""
+
+    def __enter__(self) -> "CancellationHandlers":
+        _CANCEL_REQUESTED.clear()
+        global _CANCEL_SIGNAL
+        _CANCEL_SIGNAL = None
+        self.previous: list[tuple[int, object]] = []
+        for signal_number in (signal.SIGINT, signal.SIGTERM):
+            self.previous.append((signal_number, signal.getsignal(signal_number)))
+            signal.signal(signal_number, request_cancel)
+        return self
+
+    def __exit__(self, _type: object, _value: object, _traceback: object) -> None:
+        for signal_number, previous in self.previous:
+            signal.signal(signal_number, previous)
 
 
 def out(message: str) -> None:
@@ -239,8 +362,18 @@ def parse_manifest() -> dict[str, str]:
 
 def configured_paths(home: Path, manifest: dict[str, str]) -> dict[str, Path | str]:
     target_value = os.environ.get("PASEO_REPO_DIR")
-    target = Path(target_value).expanduser() if target_value else home / manifest["install.target"].lstrip("~/")
-    cli_link = Path(os.environ.get("PASEO_CLI_LINK", str(home / ".local/bin/paseo"))).expanduser()
+    target = (
+        Path(os.path.expandvars(target_value)).expanduser()
+        if target_value
+        else home / manifest["install.target"].lstrip("~/")
+    )
+    cli_link = Path(
+        os.path.expandvars(os.environ.get("PASEO_CLI_LINK", str(home / ".local/bin/paseo")))
+    ).expanduser()
+    if not target.is_absolute():
+        target = Path.cwd() / target
+    if not cli_link.is_absolute():
+        cli_link = Path.cwd() / cli_link
     manifest_commit = manifest["repository.verified_commit"]
     configured_commit = os.environ.get("PASEO_VERIFIED_COMMIT")
     if configured_commit is not None and configured_commit != manifest_commit:
@@ -302,18 +435,38 @@ def render_source(source: Path, home: Path, destination: Path) -> None:
     destination.write_bytes(source.read_bytes().replace(b"@@HOME@@", str(home).encode()))
 
 
+def historical_obsolete_bytes(relative: str, home: Path) -> tuple[bytes, ...]:
+    source = OBSOLETE_TEMPLATES.get(relative)
+    if source is None:
+        return ()
+    if not source.is_file():
+        fail(f"historical obsolete fixture is missing: {source}")
+    home_forms = [str(home)]
+    raw_home = Path(os.path.expandvars(os.environ.get("HOME", str(home)))).expanduser()
+    if not raw_home.is_absolute():
+        raw_home = Path.cwd() / raw_home
+    if str(raw_home) not in home_forms:
+        home_forms.append(str(raw_home))
+    template = source.read_bytes()
+    return tuple(template.replace(b"@@HOME@@", value.encode()) for value in home_forms)
+
+
+def obsolete_matches(path: Path, relative: str, home: Path) -> bool:
+    if not path.is_file() or path.is_symlink() or lstat_mode(path) != OBSOLETE_MODES[relative]:
+        return False
+    expected = historical_obsolete_bytes(relative, home)
+    if expected:
+        return path.read_bytes() in expected
+    return sha256(path) in OBSOLETE_HASHES.get(relative, set())
+
+
 def obsolete_state(home: Path) -> list[tuple[str, str]]:
     result: list[tuple[str, str]] = []
-    for relative, known_hashes in OBSOLETE_HASHES.items():
+    for relative in tuple(OBSOLETE_HASHES) + tuple(OBSOLETE_TEMPLATES):
         path = home / relative
         if not path.exists() and not path.is_symlink():
             continue
-        if (
-            path.is_file()
-            and not path.is_symlink()
-            and sha256(path) in known_hashes
-            and lstat_mode(path) == OBSOLETE_MODES[relative]
-        ):
+        if obsolete_matches(path, relative, home):
             result.append((relative, "retire"))
         else:
             result.append((relative, "preserve-warning"))
@@ -348,6 +501,80 @@ def check_direct_parents(path: Path, boundary: Optional[Path] = None) -> None:
         candidate = candidate.parent
         if boundary is not None and len(candidate.parts) < len(boundary.parts):
             fail(f"managed path escapes operator home: {path}")
+
+
+def absolute_environment_path(name: str, default: Path) -> Path:
+    value = os.environ.get(name)
+    candidate = Path(os.path.expandvars(value)).expanduser() if value else default
+    return candidate if candidate.is_absolute() else Path.cwd() / candidate
+
+
+def runtime_path(home: Path) -> Path:
+    return absolute_environment_path("CODEX_ROOM_RUNTIME_ROOT", home / ".codex-runtime")
+
+
+def backup_base_path(home: Path) -> Path:
+    return absolute_environment_path("CODEX_ROOM_BACKUP_ROOT", home / ".codex-room-backups")
+
+
+def lexical_overlap(left: Path, right: Path) -> bool:
+    left = Path(os.path.abspath(left))
+    right = Path(os.path.abspath(right))
+    return left == right or left in right.parents or right in left.parents
+
+
+def path_is_within(child: Path, parent: Path) -> bool:
+    child = Path(os.path.realpath(child))
+    parent = Path(os.path.realpath(parent))
+    return child == parent or parent in child.parents
+
+
+def path_forms(path: Path) -> tuple[Path, Path]:
+    absolute = Path(os.path.abspath(path))
+    return absolute, Path(os.path.realpath(absolute))
+
+
+def any_form_overlaps(candidate: Path, protected: Path) -> bool:
+    return any(lexical_overlap(candidate_form, protected_form)
+               for candidate_form in path_forms(candidate)
+               for protected_form in path_forms(protected))
+
+
+def check_configured_path_safety(paths: dict[str, Path | str], home: Path) -> None:
+    target = paths["paseo_target"]
+    cli = paths["paseo_cli"]
+    assert isinstance(target, Path) and isinstance(cli, Path)
+    runtime_root = runtime_path(home)
+    backup_root = backup_base_path(home)
+
+    # These roots contain credentials, active sessions, or transaction
+    # snapshots. A path override never grants permission to replace one.
+    protected = [home / ".codex", runtime_root, backup_root]
+    managed_paths = [home / relative for _, relative, _ in MANAGED_FILES]
+    managed_paths.extend(home / relative for relative in OBSOLETE_HASHES)
+    managed_paths.extend(home / relative for relative in OBSOLETE_TEMPLATES)
+    check_direct_parents(runtime_root.parent)
+    check_direct_parents(backup_root.parent)
+    if backup_root.exists() and backup_root.is_symlink():
+        fail(f"transaction backup root is a redirecting link: {backup_root}")
+    if backup_root.exists() and not backup_root.is_dir():
+        fail(f"transaction backup root is not a directory: {backup_root}")
+
+    for candidate, label in ((target, "Paseo checkout"), (cli, "Paseo CLI link")):
+        check_direct_parents(candidate.parent)
+        for protected_path in protected:
+            if any_form_overlaps(candidate, protected_path):
+                fail(f"{label} overlaps protected operator state: {candidate} / {protected_path}")
+        for managed_path in managed_paths:
+            if any_form_overlaps(candidate, managed_path):
+                fail(f"{label} overlaps a managed room target: {candidate} / {managed_path}")
+
+    if lexical_overlap(target, cli):
+        fail(f"Paseo checkout and CLI link overlap: {target} / {cli}")
+    if lexical_overlap(runtime_root, backup_root):
+        fail(f"runtime root and transaction backup root overlap: {runtime_root} / {backup_root}")
+    if any_form_overlaps(runtime_root, home / ".codex") or any_form_overlaps(backup_root, home / ".codex"):
+        fail("runtime or transaction backup root overlaps operator .codex state")
 
 
 def check_runtime_obstacles(home: Path) -> None:
@@ -401,11 +628,6 @@ def check_operator_codex(home: Path) -> None:
             fail(f"operator Codex prerequisite is a dangling link: {path}")
 
 
-def runtime_path(home: Path) -> Path:
-    configured = Path(os.environ.get("CODEX_ROOM_RUNTIME_ROOT", str(home / ".codex-runtime"))).expanduser()
-    return configured if configured.is_absolute() else configured.absolute()
-
-
 def git_read(repo: Path, *args: str) -> str:
     environment = os.environ.copy()
     environment["GIT_OPTIONAL_LOCKS"] = "0"
@@ -426,6 +648,40 @@ def git_read_optional(repo: Path, *args: str) -> str:
         return ""
 
 
+def check_checkout_links(repo: Path) -> None:
+    """Reject links that can redirect helper writes outside the checkout.
+
+    Ordinary workspace links remain valid when they resolve inside the checkout.
+    Git metadata is stricter: a link anywhere under .git can redirect fetch,
+    refs, hooks, or index writes, so metadata links are never accepted.
+    """
+    root = repo.resolve()
+    stack = [repo]
+    while stack:
+        directory = stack.pop()
+        try:
+            entries = list(os.scandir(directory))
+        except OSError as error:
+            fail(f"could not inspect Paseo mutable path {directory}: {error}")
+        for entry in entries:
+            path = Path(entry.path)
+            relative = path.relative_to(repo)
+            if entry.is_symlink():
+                if relative.parts and relative.parts[0] == ".git":
+                    fail(f"Paseo Git metadata contains a redirecting link: {path}")
+                resolved = Path(os.path.realpath(path))
+                if not path_is_within(resolved, root):
+                    fail(f"Paseo workspace link escapes checkout: {path} -> {os.readlink(path)}")
+                continue
+            if entry.is_dir(follow_symlinks=False):
+                stack.append(path)
+
+    for relative in ("package.json", "package-lock.json", "node_modules"):
+        candidate = repo / relative
+        if candidate.is_symlink():
+            fail(f"Paseo dependency path is a redirecting link: {candidate}")
+
+
 def validate_existing_paseo(paths: dict[str, Path | str]) -> None:
     target = paths["paseo_target"]
     assert isinstance(target, Path)
@@ -433,6 +689,7 @@ def validate_existing_paseo(paths: dict[str, Path | str]) -> None:
         return
     if target.is_symlink() or not target.is_dir() or not (target / ".git").is_dir() or (target / ".git").is_symlink():
         fail(f"Paseo target exists but is not a direct checkout: {target}")
+    check_checkout_links(target)
     branch = str(paths["branch"])
     if git_read(target, "branch", "--show-current") != branch:
         fail(f"Paseo checkout is not on {branch}: {target}")
@@ -473,7 +730,11 @@ def run_preflight_paseo(paths: dict[str, Path | str], home: Path) -> None:
     # read-only preflight.  Keep dependency preparation wholly disposable.
     with tempfile.TemporaryDirectory(prefix="codex-room-npm-cache-", dir=os.environ.get("TMPDIR")) as cache:
         environment["npm_config_cache"] = cache
-        completed = subprocess.run([helper, "--preflight"], env=environment, text=True)
+        completed = run_owned([helper, "--preflight"], env=environment)
+        if completed.stdout:
+            sys.stdout.write(completed.stdout)
+        if completed.stderr:
+            sys.stderr.write(completed.stderr)
         if completed.returncode:
             fail(f"Paseo preflight failed with status {completed.returncode}")
 
@@ -505,7 +766,7 @@ def generate_role_stage(stage: Path, home: Path) -> dict[str, list[tuple[Path, s
     environment["CODEX_ROOM_LAB_ROOT"] = str(stage)
     environment["CODEX_ROOM_RUNTIME_ROOT"] = str(runtime_stage)
     for role in ROLES:
-        completed = subprocess.run([sync_bin, role], env=environment, text=True, capture_output=True)
+        completed = run_owned([sync_bin, role], env=environment)
         if completed.returncode:
             sys.stderr.write(completed.stderr)
             fail(f"runtime generation failed for {role} with status {completed.returncode}")
@@ -537,10 +798,15 @@ def generate_role_stage(stage: Path, home: Path) -> dict[str, list[tuple[Path, s
 
 class Transaction:
     def __init__(self, home: Path) -> None:
-        stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
         self.home = home
-        self.root = home / ".codex-room-backups" / f"core3-{stamp}-{os.getpid()}"
-        self.root.mkdir(parents=True, exist_ok=False)
+        self.backup_base = backup_base_path(home)
+        self.backup_base.mkdir(parents=True, exist_ok=True)
+        if self.backup_base.is_symlink() or not self.backup_base.is_dir():
+            fail(f"transaction backup root is not a direct directory: {self.backup_base}")
+        self.backup_base.chmod(0o700)
+        stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
+        self.root = self.backup_base / f"core3-{stamp}-{os.getpid()}-{time.time_ns()}"
+        self.root.mkdir(mode=0o700, exist_ok=False)
         self.root.chmod(0o700)
         self.entries: list[tuple[Path, Optional[Path], bool, int]] = []
         self.created_dirs: list[Path] = []
@@ -554,6 +820,7 @@ class Transaction:
         self.paseo_cli_existed = False
         self.paseo_cli_mode = 0
         self.paseo_created_dirs: list[Path] = []
+        self._rolled_back = False
 
     def backup_target(self, target: Path, label: str) -> None:
         if any(entry[0] == target for entry in self.entries):
@@ -565,6 +832,7 @@ class Transaction:
             self.entries.append((target, None, False, 0))
 
     def set_mode(self, target: Path, mode: int) -> None:
+        check_cancelled()
         if target.is_symlink() or not target.is_dir():
             fail(f"cannot set mode on non-directory runtime path: {target}")
         current = lstat_mode(target)
@@ -573,6 +841,7 @@ class Transaction:
         target.chmod(mode)
 
     def publish_file(self, target: Path, staged: Path, mode: int, label: str) -> bool:
+        check_cancelled()
         if target.exists() or target.is_symlink():
             if target.is_symlink() or not target.is_file():
                 fail(f"managed target changed into an unsafe obstacle: {target}")
@@ -592,10 +861,18 @@ class Transaction:
                 temporary.unlink()
         return True
 
-    def publish_link(self, target: Path, link_target: Path, label: str) -> bool:
+    def publish_link(
+        self,
+        target: Path,
+        link_target: Path,
+        label: str,
+        *,
+        replace_existing: bool = False,
+    ) -> bool:
+        check_cancelled()
         if target.is_symlink() and os.readlink(target) == str(link_target):
             return False
-        if target.exists() or target.is_symlink():
+        if (target.exists() or target.is_symlink()) and not replace_existing:
             fail(f"runtime shared path changed into an unsafe obstacle: {target}")
         mkdir_parents(target.parent, self.created_dirs)
         self.backup_target(target, label)
@@ -611,6 +888,7 @@ class Transaction:
         return True
 
     def retire(self, target: Path, label: str) -> bool:
+        check_cancelled()
         if not target.exists() and not target.is_symlink():
             return False
         if target.is_symlink() or not target.is_file():
@@ -621,8 +899,9 @@ class Transaction:
         return True
 
     def snapshot_paseo(self, target: Path, cli: Path) -> None:
-        self.paseo_target = target
-        self.paseo_cli = cli
+        """Seal both backups before arming either destructive restore pointer."""
+        check_cancelled()
+        created_dirs: list[Path] = []
         for candidate in (target.parent, cli.parent):
             missing: list[Path] = []
             while not candidate.exists() and not candidate.is_symlink():
@@ -631,16 +910,35 @@ class Transaction:
             if candidate.is_symlink() or (candidate.exists() and not candidate.is_dir()):
                 fail(f"Paseo parent is not a directory: {candidate}")
             for directory in missing:
-                if directory not in self.paseo_created_dirs:
-                    self.paseo_created_dirs.append(directory)
-        if target.exists() or target.is_symlink():
-            self.paseo_target_existed = True
-            self.paseo_target_modes = tree_modes(target)
-            self.paseo_target_backup = make_backup_copy(target, self.root, "paseo/checkout")
-        if cli.exists() or cli.is_symlink():
-            self.paseo_cli_existed = True
-            self.paseo_cli_mode = lstat_mode(cli)
-            self.paseo_cli_backup = make_backup_copy(cli, self.root, "paseo/cli")
+                if directory not in created_dirs:
+                    created_dirs.append(directory)
+        target_existed = target.exists() or target.is_symlink()
+        target_modes: dict[str, int] = {}
+        target_backup: Optional[Path] = None
+        if target_existed:
+            target_modes = tree_modes(target)
+            # Keep all fields local until this copy and the CLI copy both
+            # succeed. A FIFO/unreadable entry must never arm restore_target.
+            target_backup = make_backup_copy(target, self.root, "paseo/checkout")
+        check_cancelled()
+        cli_existed = cli.exists() or cli.is_symlink()
+        cli_mode = 0
+        cli_backup: Optional[Path] = None
+        if cli_existed:
+            cli_mode = lstat_mode(cli)
+            cli_backup = make_backup_copy(cli, self.root, "paseo/cli")
+        check_cancelled()
+        # The destructive rollback boundary is armed only after complete
+        # target and CLI backups are available.
+        self.paseo_target = target
+        self.paseo_target_existed = target_existed
+        self.paseo_target_modes = target_modes
+        self.paseo_target_backup = target_backup
+        self.paseo_cli = cli
+        self.paseo_cli_existed = cli_existed
+        self.paseo_cli_mode = cli_mode
+        self.paseo_cli_backup = cli_backup
+        self.paseo_created_dirs = created_dirs
 
     def restore_paseo(self) -> None:
         if self.paseo_target is not None:
@@ -661,6 +959,9 @@ class Transaction:
                 pass
 
     def rollback(self) -> None:
+        if self._rolled_back:
+            return
+        self._rolled_back = True
         self.restore_paseo()
         for target, backup, existed, mode in reversed(self.entries):
             remove_entry(target)
@@ -716,6 +1017,7 @@ def print_plan(home: Path) -> int:
     out("VERIFY    installed state plus live provider inventory (use --verify; read-only)")
     try:
         check_commands(False)
+        check_configured_path_safety(paths, home)
         check_managed_obstacles(home)
         check_operator_codex(home)
         check_runtime_obstacles(home)
@@ -731,105 +1033,125 @@ def apply_install(home: Path) -> int:
     manifest = parse_manifest()
     paths = configured_paths(home, manifest)
     transaction: Optional[Transaction] = None
-    try:
-        check_commands(True)
-        check_managed_obstacles(home)
-        check_operator_codex(home)
-        check_runtime_obstacles(home)
-        check_paseo_obstacles(paths, home)
-        validate_existing_paseo(paths)
-        # A disposable preflight validates the exact remote pin, npm lock and
-        # existing checkout before a transaction backup or live write exists.
-        run_preflight_paseo(paths, home)
-        transaction = Transaction(home)
-        with tempfile.TemporaryDirectory(prefix="codex-room-core3-", dir=os.environ.get("TMPDIR")) as temporary:
-            stage = Path(temporary)
-            rendered = stage_home(stage, home)
-            role_outputs = generate_role_stage(stage, home)
+    with CancellationHandlers():
+        try:
+            check_commands(True)
+            check_configured_path_safety(paths, home)
+            check_managed_obstacles(home)
+            check_operator_codex(home)
+            check_runtime_obstacles(home)
+            check_paseo_obstacles(paths, home)
+            validate_existing_paseo(paths)
+            # A disposable preflight validates the exact remote pin, npm lock
+            # and existing checkout before a transaction backup or live write.
+            run_preflight_paseo(paths, home)
+            with tempfile.TemporaryDirectory(prefix="codex-room-core3-", dir=os.environ.get("TMPDIR")) as temporary:
+                stage = Path(temporary)
+                rendered = stage_home(stage, home)
+                role_outputs = generate_role_stage(stage, home)
+                check_cancelled()
 
-            # The only publish operations below are managed files, generated
-            # role outputs, and the separately-owned Paseo checkout/link.
-            target = paths["paseo_target"]
-            cli = paths["paseo_cli"]
-            assert isinstance(target, Path) and isinstance(cli, Path)
-            transaction.snapshot_paseo(target, cli)
-            helper = os.environ.get("PASEO_INSTALL_BIN", str(PASEO_SOURCE))
-            environment = os.environ.copy()
-            environment["HOME"] = str(home)
-            environment["PASEO_REPO_DIR"] = str(target)
-            environment["PASEO_CLI_LINK"] = str(cli)
-            environment["PASEO_FORK_URL"] = str(paths["fork"])
-            environment["PASEO_UPSTREAM_URL"] = str(paths["upstream"])
-            environment["PASEO_BRANCH"] = str(paths["branch"])
-            environment["PASEO_VERIFIED_COMMIT"] = str(paths["commit"])
-            completed = subprocess.run([helper], env=environment, text=True, capture_output=True)
-            if completed.stdout:
-                sys.stdout.write(completed.stdout)
-            if completed.returncode:
+                # The transaction is created only after every generated output
+                # is ready. Paseo target and CLI backups are then sealed before
+                # any helper can mutate the live checkout.
+                transaction = Transaction(home)
+                target = paths["paseo_target"]
+                cli = paths["paseo_cli"]
+                assert isinstance(target, Path) and isinstance(cli, Path)
+                transaction.snapshot_paseo(target, cli)
+                check_cancelled()
+
+                helper = os.environ.get("PASEO_INSTALL_BIN", str(PASEO_SOURCE))
+                environment = os.environ.copy()
+                environment["HOME"] = str(home)
+                environment["PASEO_REPO_DIR"] = str(target)
+                # Even a legacy/custom helper that ignores coordinator mode
+                # can only publish its CLI link into disposable staging. The
+                # final operator link is always published by this journal.
+                helper_cli_stage = stage / "paseo-cli"
+                environment["PASEO_CLI_LINK"] = str(helper_cli_stage)
+                environment["PASEO_FORK_URL"] = str(paths["fork"])
+                environment["PASEO_UPSTREAM_URL"] = str(paths["upstream"])
+                environment["PASEO_BRANCH"] = str(paths["branch"])
+                environment["PASEO_VERIFIED_COMMIT"] = str(paths["commit"])
+                environment["PASEO_COORDINATOR_MANAGED"] = "1"
+                completed = run_owned([helper], env=environment)
+                if completed.stdout:
+                    sys.stdout.write(completed.stdout)
                 if completed.stderr:
                     sys.stderr.write(completed.stderr)
-                fail(f"Paseo publish failed with status {completed.returncode}")
+                if completed.returncode:
+                    fail(f"Paseo publish failed with status {completed.returncode}")
+                check_cancelled()
 
-            for _, relative, mode in MANAGED_FILES:
-                transaction.publish_file(home / relative, rendered[relative], mode, relative.replace("/", "_"))
-            for relative, state in obsolete_state(home):
-                if state == "retire":
-                    transaction.retire(home / relative, relative.replace("/", "_"))
+                cli_target = target / str(paths["cli_entrypoint"])
+                if not cli_target.is_file():
+                    fail(f"Paseo CLI entrypoint is missing after publish: {cli_target}")
+                if cli_target.is_symlink() and not path_is_within(cli_target, target):
+                    fail(f"Paseo CLI entrypoint escapes checkout: {cli_target}")
+                transaction.publish_link(cli, cli_target, "paseo_cli", replace_existing=True)
 
-            runtime_root = runtime_path(home)
-            if runtime_root.is_symlink() or (runtime_root.exists() and not runtime_root.is_dir()):
-                fail(f"runtime root is not a direct directory: {runtime_root}")
-            if not runtime_root.exists():
-                runtime_root.mkdir(mode=0o700)
-                transaction.created_dirs.append(runtime_root)
-            else:
-                transaction.set_mode(runtime_root, 0o700)
-            for role in ROLES:
-                role_root = runtime_root / role
-                if role_root.is_symlink() or (role_root.exists() and not role_root.is_dir()):
-                    fail(f"runtime role directory is not a direct directory: {role_root}")
-                if not role_root.exists():
-                    role_root.mkdir(mode=0o700)
-                    transaction.created_dirs.append(role_root)
+                for _, relative, mode in MANAGED_FILES:
+                    transaction.publish_file(home / relative, rendered[relative], mode, relative.replace("/", "_"))
+                for relative, state in obsolete_state(home):
+                    if state == "retire":
+                        transaction.retire(home / relative, relative.replace("/", "_"))
+
+                runtime_root = runtime_path(home)
+                if runtime_root.is_symlink() or (runtime_root.exists() and not runtime_root.is_dir()):
+                    fail(f"runtime root is not a direct directory: {runtime_root}")
+                if not runtime_root.exists():
+                    runtime_root.mkdir(mode=0o700)
+                    transaction.created_dirs.append(runtime_root)
                 else:
-                    transaction.set_mode(role_root, 0o700)
-                for staged, kind, value, mode in role_outputs[role]:
-                    if kind == "file":
-                        target_path = role_root / staged.name
-                        transaction.publish_file(target_path, staged, mode, f"{role}_{staged.name}")
+                    transaction.set_mode(runtime_root, 0o700)
+                for role in ROLES:
+                    role_root = runtime_root / role
+                    if role_root.is_symlink() or (role_root.exists() and not role_root.is_dir()):
+                        fail(f"runtime role directory is not a direct directory: {role_root}")
+                    if not role_root.exists():
+                        role_root.mkdir(mode=0o700)
+                        transaction.created_dirs.append(role_root)
                     else:
-                        assert isinstance(value, Path)
-                        target_path = role_root / value.name
-                        if target_path.exists() or target_path.is_symlink():
-                            if not same_link(target_path, value):
-                                fail(f"runtime shared path is redirected or customized: {target_path}")
+                        transaction.set_mode(role_root, 0o700)
+                    for staged, kind, value, mode in role_outputs[role]:
+                        if kind == "file":
+                            target_path = role_root / staged.name
+                            transaction.publish_file(target_path, staged, mode, f"{role}_{staged.name}")
                         else:
-                            transaction.publish_link(target_path, value, f"{role}_{value.name}")
+                            assert isinstance(value, Path)
+                            target_path = role_root / value.name
+                            if target_path.exists() or target_path.is_symlink():
+                                if not same_link(target_path, value):
+                                    fail(f"runtime shared path is redirected or customized: {target_path}")
+                            else:
+                                transaction.publish_link(target_path, value, f"{role}_{value.name}")
 
-            verify_bin = os.environ.get("CODEX_ROOM_VERIFY_BIN", str(VERIFY_SOURCE))
-            verify_env = os.environ.copy()
-            verify_env["HOME"] = str(home)
-            verify_env["CODEX_ROOM_ALLOW_PRESERVED_OBSOLETE"] = "1"
-            verify_env.setdefault("CODEX_ROOM_TOML_PYTHON", toml_interpreter())
-            completed = subprocess.run([verify_bin], env=verify_env, text=True, capture_output=True)
-            if completed.stdout:
-                sys.stdout.write(completed.stdout)
-            if completed.returncode:
+                verify_bin = os.environ.get("CODEX_ROOM_VERIFY_BIN", str(VERIFY_SOURCE))
+                verify_env = os.environ.copy()
+                verify_env["HOME"] = str(home)
+                verify_env["CODEX_ROOM_ALLOW_PRESERVED_OBSOLETE"] = "1"
+                verify_env.setdefault("CODEX_ROOM_TOML_PYTHON", toml_interpreter())
+                completed = run_owned([verify_bin], env=verify_env)
+                if completed.stdout:
+                    sys.stdout.write(completed.stdout)
                 if completed.stderr:
                     sys.stderr.write(completed.stderr)
-                fail(f"final installed verification failed with status {completed.returncode}")
-        restrict_tree(transaction.root)
-        out(f"CORE3_APPLY_OK backup={transaction.root}")
-        return 0
-    except (InstallError, OSError, subprocess.CalledProcessError) as error:
-        if transaction is not None:
-            try:
-                transaction.rollback()
-                restrict_tree(transaction.root)
-            except Exception as rollback_error:  # pragma: no cover - last-resort signal
-                warn(f"rollback encountered an additional error: {rollback_error}")
-        warn(str(error))
-        return 1
+                if completed.returncode:
+                    fail(f"final installed verification failed with status {completed.returncode}")
+            assert transaction is not None
+            restrict_tree(transaction.root)
+            out(f"CORE3_APPLY_OK backup={transaction.root}")
+            return 0
+        except (InstallError, OSError, subprocess.CalledProcessError) as error:
+            if transaction is not None:
+                try:
+                    transaction.rollback()
+                    restrict_tree(transaction.root)
+                except Exception as rollback_error:  # pragma: no cover - last-resort signal
+                    warn(f"rollback encountered an additional error: {rollback_error}")
+            warn(str(error))
+            return 1
 
 
 def verify_install(home: Path, live: bool) -> int:
