@@ -28,7 +28,9 @@ class SetupShapeTests(unittest.TestCase):
         remote = root / "paseo.git"
         subprocess.run(["git", "init", "-q", "-b", "main", str(work)], check=True)
         (work / "packages" / "cli" / "bin").mkdir(parents=True)
-        (work / "packages" / "cli" / "bin" / "paseo").write_text("#!/usr/bin/env node\n")
+        cli_entrypoint = work / "packages" / "cli" / "bin" / "paseo"
+        cli_entrypoint.write_text("#!/usr/bin/env node\nimport '../dist/index.js'\n")
+        cli_entrypoint.chmod(0o755)
         (work / "package.json").write_text('{"scripts":{"prepare":"true"}}\n')
         (work / "package-lock.json").write_text('{"lockfileVersion":3}\n')
         subprocess.run(["git", "-C", str(work), "add", "."], check=True)
@@ -48,6 +50,13 @@ class SetupShapeTests(unittest.TestCase):
             "#!/bin/sh\n"
             "printf '%s\\n' \"$*\" >> \"${NPM_LOG:?}\"\n"
             + ("printf changed >> package-lock.json\n" if change_lock else "")
+            + "if [ \"${1:-}\" = run ] && [ \"${2:-}\" = build:server:clean ]; then\n"
+            + "  if [ \"${NPM_FAIL_BUILD:-0}\" = 1 ]; then exit 17; fi\n"
+            + "  if [ \"${NPM_SKIP_BUILD_OUTPUT:-0}\" = 1 ]; then exit 0; fi\n"
+            + "  mkdir -p packages/cli/dist packages/server/dist/scripts\n"
+            + "  if [ \"${NPM_BROKEN_CLI:-0}\" = 1 ]; then printf '%s\\n' \"import './missing-cli-module.js';\" > packages/cli/dist/index.js; else printf '%s\\n' \"if (process.argv.includes('--help')) console.log('paseo help');\" > packages/cli/dist/index.js; fi\n"
+            + "  printf '%s\\n' \"console.log('paseo server');\" > packages/server/dist/scripts/supervisor-entrypoint.js\n"
+            + "fi\n"
             + "mkdir -p .git/hooks\nprintf '# lefthook managed\\n' > .git/hooks/pre-commit\n"
         )
         npm.chmod(0o755)
@@ -247,12 +256,47 @@ class SetupShapeTests(unittest.TestCase):
             link = home / ".local" / "bin" / "paseo"
             self.assertTrue(link.is_symlink())
             self.assertEqual(os.readlink(link), str(target / "packages/cli/bin/paseo"))
-            self.assertEqual((root / "npm.log").read_text().splitlines(), ["ci"])
+            self.assertEqual((root / "npm.log").read_text().splitlines(), ["ci", "run build:server:clean"])
+            self.assertTrue((target / "packages/cli/dist/index.js").is_file())
+            self.assertTrue((target / "packages/server/dist/scripts/supervisor-entrypoint.js").is_file())
 
             wrong_target = root / "wrong"
             failed = subprocess.run([str(ROOT / "scripts" / "install-paseo-fork")], env=self.paseo_env(home, remote, wrong_target, first, npm), capture_output=True, text=True)
             self.assertNotEqual(failed.returncode, 0)
             self.assertFalse(wrong_target.exists())
+
+    def test_paseo_build_failure_never_publishes_checkout(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary); home = root / "home"; target = root / "installed"
+            remote, _, second = self.make_paseo_remote(root)
+            npm = self.fake_npm(root)
+            env = {**self.paseo_env(home, remote, target, second, npm), "NPM_FAIL_BUILD": "1"}
+            failed = subprocess.run(
+                [str(ROOT / "scripts/install-paseo-fork")],
+                env=env, capture_output=True, text=True,
+            )
+            self.assertNotEqual(failed.returncode, 0)
+            self.assertIn("build:server:clean failed", failed.stderr)
+            self.assertFalse(target.exists())
+            self.assertEqual((root / "npm.log").read_text().splitlines(), ["ci", "run build:server:clean"])
+
+    def test_paseo_build_outputs_and_cli_smoke_are_required_before_publish(self) -> None:
+        for flag, expected in (
+            ("NPM_SKIP_BUILD_OUTPUT", "Paseo CLI build output is missing"),
+            ("NPM_BROKEN_CLI", "Paseo CLI --help failed"),
+        ):
+            with self.subTest(flag=flag), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary); home = root / "home"; target = root / "installed"
+                remote, _, second = self.make_paseo_remote(root)
+                npm = self.fake_npm(root)
+                env = {**self.paseo_env(home, remote, target, second, npm), flag: "1"}
+                failed = subprocess.run(
+                    [str(ROOT / "scripts/install-paseo-fork")],
+                    env=env, capture_output=True, text=True,
+                )
+                self.assertNotEqual(failed.returncode, 0)
+                self.assertIn(expected, failed.stderr)
+                self.assertFalse(target.exists())
 
     def test_paseo_preflight_validates_existing_target_without_mutation(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -292,6 +336,16 @@ class SetupShapeTests(unittest.TestCase):
             ancestor_before = snapshot(ancestor)
             subprocess.run([str(ROOT / "scripts/install-paseo-fork"), "--preflight"], check=True, env=ancestor_env, capture_output=True, text=True)
             self.assertEqual(snapshot(ancestor), ancestor_before)
+
+            preflight_build_failure, preflight_failure_env = clone("preflight-build-failure")
+            preflight_failure_before = snapshot(preflight_build_failure)
+            preflight_failure_env = {**preflight_failure_env, "NPM_FAIL_BUILD": "1"}
+            failed_preflight = subprocess.run(
+                [str(ROOT / "scripts/install-paseo-fork"), "--preflight"],
+                env=preflight_failure_env, capture_output=True, text=True,
+            )
+            self.assertNotEqual(failed_preflight.returncode, 0)
+            self.assertEqual(snapshot(preflight_build_failure), preflight_failure_before)
 
             cases = [
                 ("dirty", lambda target: (target / "package.json").write_text("dirty\n")),
@@ -385,6 +439,14 @@ class SetupShapeTests(unittest.TestCase):
             before = subprocess.run(["git", "-C", str(target), "rev-parse", "HEAD"], check=True, capture_output=True, text=True).stdout.strip()
             subprocess.run([str(ROOT / "scripts" / "install-paseo-fork")], check=True, env=env, capture_output=True, text=True)
             self.assertEqual(before, subprocess.run(["git", "-C", str(target), "rev-parse", "HEAD"], check=True, capture_output=True, text=True).stdout.strip())
+            for artifact in (
+                target / "packages/cli/dist/index.js",
+                target / "packages/server/dist/scripts/supervisor-entrypoint.js",
+            ):
+                artifact.unlink()
+            subprocess.run([str(ROOT / "scripts" / "install-paseo-fork")], check=True, env=env, capture_output=True, text=True)
+            self.assertTrue((target / "packages/cli/dist/index.js").is_file())
+            self.assertTrue((target / "packages/server/dist/scripts/supervisor-entrypoint.js").is_file())
 
             dirty, dirty_env = clone("dirty")
             (dirty / "package.json").write_text("dirty\n")
@@ -468,7 +530,13 @@ class SetupShapeTests(unittest.TestCase):
             root = Path(temporary); home = root / "home"; runtime = home / ".codex-runtime"
             subprocess.run([str(ROOT / "scripts/install"), "--apply"], env={**os.environ, "HOME": str(home)}, check=True, capture_output=True, text=True)
             paseo = root / "custom-paseo"; (paseo / "packages/cli/bin").mkdir(parents=True)
-            (paseo / "packages/cli/bin/paseo").write_text("#!/usr/bin/env node\n")
+            cli_entrypoint = paseo / "packages/cli/bin/paseo"
+            cli_entrypoint.write_text("#!/usr/bin/env node\nimport '../dist/index.js'\n")
+            cli_entrypoint.chmod(0o755)
+            (paseo / "packages/cli/dist").mkdir(parents=True)
+            (paseo / "packages/cli/dist/index.js").write_text("if (process.argv.includes('--help')) console.log('paseo help');\n")
+            (paseo / "packages/server/dist/scripts").mkdir(parents=True)
+            (paseo / "packages/server/dist/scripts/supervisor-entrypoint.js").write_text("console.log('paseo server');\n")
             subprocess.run(["git", "init", "-q", "-b", "main", str(paseo)], check=True)
             subprocess.run(["git", "-C", str(paseo), "add", "."], check=True)
             subprocess.run(["git", "-C", str(paseo), "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "-qm", "fixture"], check=True)
@@ -513,6 +581,16 @@ class SetupShapeTests(unittest.TestCase):
             self.assertFalse((root / "ocr.log").exists())
             self.assertEqual((runtime / "review/private").read_text(), "must remain ignored\n")
             self.assertEqual((runtime / "harness/private").read_text(), "must remain ignored\n")
+
+            (paseo / "packages/cli/dist/index.js").unlink()
+            missing_cli_bundle = subprocess.run([str(ROOT / "scripts/verify")], env=env, capture_output=True, text=True)
+            self.assertNotEqual(missing_cli_bundle.returncode, 0)
+            self.assertIn("FAIL  Paseo CLI bundle exists", missing_cli_bundle.stdout)
+            (paseo / "packages/cli/dist/index.js").write_text("import './missing-cli-module.js';\n")
+            broken_cli = subprocess.run([str(ROOT / "scripts/verify")], env=env, capture_output=True, text=True)
+            self.assertNotEqual(broken_cli.returncode, 0)
+            self.assertIn("FAIL  Paseo CLI --help runs", broken_cli.stdout)
+            (paseo / "packages/cli/dist/index.js").write_text("if (process.argv.includes('--help')) console.log('paseo help');\n")
 
             lead_config = runtime / "lead/config.toml"
             valid_config = lead_config.read_text()

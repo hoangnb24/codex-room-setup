@@ -223,8 +223,19 @@ PY
   paseo_checkout="${PASEO_REPO_DIR:-$HOME/projects/supervisors/paseo}"
   paseo_cli_link="${PASEO_CLI_LINK:-$HOME/.local/bin/paseo}"
   expected_paseo_cli="$paseo_checkout/packages/cli/bin/paseo"
+  expected_paseo_cli_bundle="$paseo_checkout/packages/cli/dist/index.js"
+  expected_paseo_server_bundle="$paseo_checkout/packages/server/dist/scripts/supervisor-entrypoint.js"
   check "Paseo CLI links to local fork" test \
     "$(readlink "$paseo_cli_link" 2>/dev/null || true)" = "$expected_paseo_cli"
+  check "Paseo CLI entrypoint is executable" test -x "$expected_paseo_cli"
+  check "Paseo CLI bundle exists" test -f "$expected_paseo_cli_bundle"
+  check "Paseo CLI bundle is a direct file" test ! -L "$expected_paseo_cli_bundle"
+  check "Paseo daemon runner exists" test -f "$expected_paseo_server_bundle"
+  check "Paseo daemon runner is a direct file" test ! -L "$expected_paseo_server_bundle"
+  paseo_cli_help() {
+    (cd "$paseo_checkout" && "./packages/cli/bin/paseo" --help >/dev/null 2>&1)
+  }
+  check "Paseo CLI --help runs" paseo_cli_help
   expected_paseo_commit=$(awk -F'"' '/^verified_commit = / {print $2}' "$REPO_ROOT/paseo/source.toml")
   expected_paseo_branch=$(awk -F'"' '/^branch = / {print $2; exit}' "$REPO_ROOT/paseo/source.toml")
   expected_paseo_fork=$(awk -F'"' '/^fork = / {print $2; exit}' "$REPO_ROOT/paseo/source.toml")

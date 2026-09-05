@@ -193,6 +193,8 @@ before_repeat_hashes=$(sha256sum "${preserved_markers[@]}")
 "$source_root/install" --apply
 printf 'PUBLIC_INSTALL_PASS repeated\n'
 
+python3 "$source_root/tests/container/smoke-daemon.py" "$fake_home/.local/bin/paseo"
+
 after_hashes=$(sha256sum "${preserved_markers[@]}")
 [[ "$after_hashes" == "$before_repeat_hashes" ]] || fail "operator or session marker bytes changed"
 

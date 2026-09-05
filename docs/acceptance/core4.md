@@ -175,9 +175,37 @@ the README for installation, then record commands and observations on
    review is complete.
 
 Live role identity, actual tool inventory, bounded write acceptance, and the
-final Project field remain explicitly pending. The container fixture can use a
-fake provider inventory to exercise the parser, but that does not prove a live
-daemon, Codex authentication, MCP calls, or real sessions.
+final Project field remain explicitly pending. The fake provider inventory
+exercises the verification parser. A separate real daemon smoke exercises
+startup and provider RPC, without proving Codex authentication, MCP calls, or
+real sessions.
+
+## Paseo build correction
+
+The operator's successful apply exposed a missing runtime build: the CLI
+launcher existed, but `packages/cli/dist/index.js` did not. Dependency
+installation alone did not produce the server and CLI bundles. Both preflight
+and publication now run the audited fork's `build:server:clean`, require the
+CLI bundle and daemon runner, and execute CLI help before reporting readiness.
+Installed verification also checks these outputs and CLI execution.
+
+A disposable copy of the operator's audited checkout passed the clean build
+and a real daemon/provider RPC smoke test on Node 24.9.0. The operator checkout
+and Codex configuration were not modified by that test. Container acceptance
+now includes the same real daemon smoke after repeated public installation,
+using a temporary home and loopback port with relay and web UI disabled.
+This smoke tests executable runtime startup; authenticated role sessions and
+actual MCP tool inventory remain part of the Human review.
+
+Validation for this correction: 54 tests passed (138.85 seconds), source
+verification passed, and independent code review passed. Full container
+acceptance passed with Node 22.16.0/Python 3.11.2, including fresh/repeated apply,
+preservation checks, and `PASEO_DAEMON_SMOKE_OK real_cli_and_provider_rpc`.
+The initial uncached container run was stopped during a slow Git download;
+the passing run mounted the same audited Git objects read-only through
+`GIT_ALTERNATE_OBJECT_DIRECTORIES`. Remote pin checks and all npm/build steps
+still ran. Its log is `/tmp/paseo-build-container-cached.log`; macOS build and
+smoke logs are under `/tmp/paseo-build-acceptance.NGT4UM/`.
 
 ## Boundaries and deferred work
 

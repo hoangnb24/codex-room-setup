@@ -12,9 +12,12 @@ The source of truth for fork provenance is [`paseo/source.toml`](../paseo/source
 
 `scripts/install-paseo-fork` treats that manifest as authority. A fresh install
 fetches the exact commit into a sibling staging directory, confirms that the
-owner fork's named branch still resolves to that commit, runs `npm ci`, and
-publishes the target only after provenance, lockfile, lifecycle-hook, and CLI
-checks pass. A failed validation leaves no target checkout.
+owner fork's named branch still resolves to that commit, runs `npm ci` followed
+by `npm run build:server:clean`, and publishes the target only after provenance,
+lockfile, lifecycle-hook, build-output, and CLI smoke checks pass. The checks
+require the CLI bundle (`packages/cli/dist/index.js`), daemon runner
+(`packages/server/dist/scripts/supervisor-entrypoint.js`), and a successful
+`paseo --help`. A failed validation leaves no target checkout.
 
 An existing checkout must be on the expected branch with a clean tracked/index
 state. Untracked operator state is preserved. The installer accepts only an

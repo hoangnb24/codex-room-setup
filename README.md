@@ -52,12 +52,13 @@ cd codex-room-setup
 ./install --verify                # installed checks plus live provider inventory
 ```
 
-The root command preflights the pinned Paseo checkout, renders managed HOME
-files, stages all three role runtimes, and publishes the complete transition
-with rollback on a dependency, generation, or final verification failure. It
-does not install or authenticate Codex, touch `~/.codex`, start a daemon, or
-build Paseo Desktop. Start and reach the local provider daemon explicitly
-before live verification:
+The root command preflights the pinned Paseo checkout, installs dependencies,
+builds the Paseo server/CLI bundles, renders managed HOME files, stages all
+three role runtimes, and publishes the complete transition with rollback on a
+dependency, build, generation, or final verification failure. It does not
+install or authenticate Codex, touch `~/.codex`, start a daemon, or build
+Paseo Desktop. Start and reach the local provider daemon explicitly before
+live verification:
 
 ```bash
 paseo daemon start
@@ -90,10 +91,10 @@ sessions, plugins, or other operator data. A successful run prints the exact
 Codex role inventory, Paseo MCP recipients, runtime tree, and
 `CONTAINER_ACCEPTANCE_OK`.
 
-This Linux container proves the installer topology, legacy-role rejection,
-repeatability, and preservation boundaries. It does not prove Paseo Desktop or
-GUI behavior, macOS signing/TCC/application restart, or a live Paseo daemon or
-Codex session.
+This Linux container checks installer topology, legacy-role rejection,
+repeatability, preservation, and real Paseo daemon startup with a provider RPC.
+Authenticated Codex sessions, Paseo Desktop/GUI behavior, and macOS
+signing/TCC/application restart remain operator checks.
 
 The Paseo source manifest pins an immutable commit. The public installer
 preflights Paseo in a disposable location before changing live state. Paseo uses

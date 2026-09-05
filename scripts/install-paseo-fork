@@ -11,6 +11,8 @@ target="${PASEO_REPO_DIR:-$HOME/projects/supervisors/paseo}"
 branch="${PASEO_BRANCH:-$(awk -F'"' '/^branch = / {print $2; exit}' "$REPO_ROOT/paseo/source.toml")}"
 verified_commit="${PASEO_VERIFIED_COMMIT:-$(awk -F'"' '/^verified_commit = / {print $2; exit}' "$REPO_ROOT/paseo/source.toml")}"
 cli_entrypoint="${PASEO_CLI_ENTRYPOINT:-packages/cli/bin/paseo}"
+cli_bundle="packages/cli/dist/index.js"
+server_bundle="packages/server/dist/scripts/supervisor-entrypoint.js"
 cli_link="${PASEO_CLI_LINK:-$HOME/.local/bin/paseo}"
 npm_bin="${PASEO_NPM_BIN:-npm}"
 coordinator_managed="${PASEO_COORDINATOR_MANAGED:-0}"
@@ -64,6 +66,20 @@ npm_ci_checked() {
   done
 }
 
+build_checked() {
+  local repo="$1" cli_target help_output
+  cli_target="$repo/$cli_entrypoint"
+  if ! (cd "$repo" && "$npm_bin" run build:server:clean); then
+    die "Paseo build:server:clean failed"
+  fi
+  [[ -f "$repo/$cli_bundle" && ! -L "$repo/$cli_bundle" ]] || die "Paseo CLI build output is missing: $repo/$cli_bundle"
+  [[ -f "$repo/$server_bundle" && ! -L "$repo/$server_bundle" ]] || die "Paseo server build output is missing: $repo/$server_bundle"
+  [[ -f "$cli_target" && ! -L "$cli_target" && -x "$cli_target" ]] || die "Paseo CLI entrypoint is missing or not executable: $cli_target"
+  if ! help_output=$(cd "$repo" && "./$cli_entrypoint" --help 2>&1); then
+    die "Paseo CLI --help failed: $cli_target${help_output:+; output: $help_output}"
+  fi
+}
+
 stage_exact() {
   local destination="$1"
   git init -q "$destination"
@@ -75,7 +91,7 @@ stage_exact() {
   git -C "$destination" config "branch.$branch.remote" origin
   git -C "$destination" config "branch.$branch.merge" "refs/heads/$branch"
   npm_ci_checked "$destination"
-  [[ -f "$destination/$cli_entrypoint" ]] || die "Paseo CLI entrypoint is missing from audited commit"
+  build_checked "$destination"
   [[ -z "$(git -C "$destination" status --porcelain --untracked-files=no)" ]] || die "Paseo lifecycle changed tracked files"
 }
 
@@ -181,6 +197,7 @@ fi
 git -C "$target" config "branch.$branch.remote" origin
 git -C "$target" config "branch.$branch.merge" "refs/heads/$branch"
 npm_ci_checked "$target"
+build_checked "$target"
 [[ -z "$(git -C "$target" status --porcelain --untracked-files=no)" ]] || die "Paseo lifecycle changed tracked files"
 publish_cli_link
 log "PASEO_FORK_READY"
