@@ -51,8 +51,8 @@ vào `~/.codex`.
 `codex-room-sync` đọc `~/.codex/config.toml` làm base, áp dụng các scalar được
 cho phép trong overlay, ghép chỉ dẫn của role, và sinh `config.toml` cùng model
 catalog riêng. Nó luôn tắt native Codex agents để Paseo giữ topology ba vai
-trò. Auth, skills, plugins, và hooks được dùng qua symlink; session, log, state
-và database vẫn tách theo role.
+trò. Auth, skills và plugins được dùng qua symlink; `hooks.json` là tùy chọn
+và chỉ được chia sẻ khi có sẵn. Session, log, state và database vẫn tách theo role.
 
 Generator không cần thêm workflow asset để chạy. Nó không khởi tạo, xóa, hay
 ghi đè notebook riêng, session, runtime directory, hoặc byte thuộc `~/.codex`

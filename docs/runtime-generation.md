@@ -3,7 +3,7 @@
 `codex-room-sync` treats each role directory as an isolated Codex home while sharing stable personal resources by symlink.
 
 ```text
-shared:   auth.json, AGENTS.md, hooks.json, skills, plugins
+shared:   auth.json, AGENTS.md, skills, plugins; hooks.json when present
 isolated: config.toml, sessions, logs, state, memories, queues
 room:     model instructions and workspace protocol reference
 ```

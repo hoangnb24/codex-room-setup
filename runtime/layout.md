@@ -6,7 +6,7 @@
 ├── model-catalog.no-native-agents.json
 ├── auth.json -> ~/.codex/auth.json
 ├── AGENTS.md -> ~/.codex/AGENTS.md
-├── hooks.json -> ~/.codex/hooks.json
+├── hooks.json -> ~/.codex/hooks.json  (optional; when present)
 ├── skills -> ~/.codex/skills
 ├── plugins -> ~/.codex/plugins
 └── model-instructions.md -> ~/.config/codex-room/model-instructions.md
