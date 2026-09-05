@@ -23,8 +23,8 @@
 | Layer | Owner | Mutable state |
 | --- | --- | --- |
 | `~/.codex` | Operator/Codex | Auth, global config, skills, plugins, sessions |
-| `~/.config/codex-room` | This repository | Role overlays and retained workflow references |
-| `~/.codex-runtime` | `codex-room-sync` | Generated configs plus role-local sessions, databases, and Harness plugins |
+| `~/.config/codex-room` | This repository | Role overlays and the workspace protocol reference |
+| `~/.codex-runtime` | `codex-room-sync` | Generated configs plus role-local sessions and databases |
 | `~/.paseo` | Paseo | Provider config, agents, projects, worktrees, logs and identity |
 | Paseo fork checkout | Git | Source code for CLI, daemon and Desktop |
 
@@ -37,18 +37,14 @@ For a role, the sync script:
 3. Adds role-specific `developer_instructions`.
 4. Generates a model catalog with native multi-agent metadata removed.
 5. Forces `[agents].enabled = false` and all native multi-agent feature flags off.
-6. Symlinks shared Codex resources and the anti-pattern catalog; Harness keeps a private `plugins/` directory.
-7. Removes inherited MCP server tables for Review.
+6. Symlinks shared Codex resources and the common model instructions.
 
-Supervisor, Lead, Peer, and Review retain a canonical
-`plugins -> ~/.codex/plugins` symlink. Harness is the sole exception:
-`~/.codex-runtime/harness/plugins` is a private directory preserved across
-syncs. Migration removes only a symlink resolving to the canonical plugins
-directory; every other symlink or non-directory path fails closed.
-Harness also strips inherited `[mcp_servers.*]` tables from its generated Codex
-config. Its orchestration capability comes only from Paseo provider injection.
-The launcher resolves evidence homes read-only with
-`codex-room --resolve-evidence-home <role>` and does not sync on that route.
+Supervisor, Lead, and Peer retain a canonical
+`plugins -> ~/.codex/plugins` symlink. Existing additional runtime directories
+and private workflow files are not generated, inspected, migrated, or removed.
+The launcher has one public route: it accepts one of the three retained roles,
+regenerates that role's runtime, and starts Codex with its isolated
+`CODEX_HOME`.
 
 The retained `WORKSPACE_PROTOCOL.md` is not linked into role runtimes. Each
 workspace can provide its own `docs/WORKSPACE_PROTOCOL.md`.

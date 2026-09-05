@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+container_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+repo_root=$(cd "$container_dir/../.." && pwd)
+image="codex-room-container-acceptance:node22-python311"
+
+command -v docker >/dev/null 2>&1 || {
+  echo "ERROR: Docker is required for test-container" >&2
+  exit 1
+}
+docker info >/dev/null 2>&1 || {
+  echo "ERROR: Docker daemon is unavailable" >&2
+  exit 1
+}
+
+docker build --tag "$image" "$container_dir"
+docker run --rm \
+  --cap-drop ALL \
+  --security-opt no-new-privileges \
+  --mount "type=bind,src=$repo_root,dst=/workspace,readonly" \
+  "$image"

@@ -8,7 +8,7 @@ require_command jq
 runtime_root="${CODEX_ROOM_RUNTIME_ROOT:-$HOME/.codex-runtime}"
 snapshot_root="$REPO_ROOT/runtime/snapshots"
 
-for role in supervisor lead peer review harness; do
+for role in supervisor lead peer; do
   runtime="$runtime_root/$role"
   [[ -f "$runtime/config.toml" ]] || die "runtime is missing: $runtime/config.toml"
   mkdir -p "$snapshot_root/$role"

@@ -1,16 +1,16 @@
 # Codex Room Setup
 
-Reproducible configuration for a five-role Codex room running through a local Paseo fork:
+Reproducible configuration for a three-role Codex room running through a local Paseo fork:
 
 ```text
 Paseo provider
-  -> codex-room <supervisor|lead|peer|review|harness>
+  -> codex-room <supervisor|lead|peer>
   -> codex-room-sync
   -> isolated ~/.codex-runtime/<role>
   -> Codex app-server
 ```
 
-This repository deliberately does **not** own `~/.codex`. Each operator installs and authenticates Codex independently. The sync script reads the operator's existing `~/.codex/config.toml` as its base and shares their auth, skills, plugins, hooks, and global `AGENTS.md` by symlink.
+This repository deliberately does **not** own `~/.codex`. Each operator installs and authenticates Codex independently. The sync script reads the operator's existing `~/.codex/config.toml` as its base and shares their auth, skills, plugins, and global `AGENTS.md` by symlink. Hooks are shared only when `hooks.json` exists.
 
 ## What gets installed
 
@@ -22,7 +22,7 @@ The `home/` directory mirrors `$HOME`:
 | `home/.local/bin/codex-room*` | `~/.local/bin/` |
 | `home/.paseo/config.json.template` | `~/.paseo/config.json` |
 
-`scripts/install-paseo-fork` also creates this checkout-aware symlink:
+The public installer creates this checkout-aware symlink:
 
 ```text
 ~/.local/bin/paseo
@@ -35,40 +35,84 @@ The `home/` directory mirrors `$HOME`:
 
 Prerequisites:
 
-- macOS or a Unix-like environment with Bash, Python 3, Git, Node, npm, and jq.
-- Codex installed and authenticated.
+- macOS or another Unix-like environment with Bash, Python 3.11 or newer,
+  Git, Node 22, npm, and jq.
+- Codex CLI installed and authenticated, with an existing `~/.codex/config.toml`,
+  `auth.json`, `AGENTS.md`, `skills/`, and `plugins/` available for runtime
+  sharing. `hooks.json` is optional: an existing file is shared, while an
+  absent file is skipped without creating anything in the operator home.
 - `~/.local/bin` on `PATH`.
 
 ```bash
-git clone <this-repository-url> codex-room-setup
+git clone https://github.com/hoangnb24/codex-room-setup.git codex-room-setup
 cd codex-room-setup
 
-./scripts/doctor
-./scripts/bootstrap               # dry-run: show every pinned dependency/action
-./scripts/bootstrap --apply       # install dependencies, config and five runtimes
+./install                         # read-only plan and prerequisite check
+./install --apply                 # transactional Paseo/config/runtime install
+./install --verify                # installed checks plus live provider inventory
 ```
 
-`scripts/bootstrap` installs the pinned Open Code Review release, normalizes
-the Paseo checkout to `origin = hoangnb24 fork` and `upstream = public repo`,
-installs Paseo's npm dependencies, and installs Better Harness from its audited
-fork commit into the private Harness home. It does not install or authenticate
-Codex and does not build Paseo Desktop. The lower-level `install`,
-`install-paseo-fork`, `sync-all`, and `verify` commands remain available for
-targeted maintenance.
+The root command preflights the pinned Paseo checkout, installs dependencies,
+builds the Paseo server/CLI bundles, renders managed HOME files, stages all
+three role runtimes, and publishes the complete transition with rollback on a
+dependency, build, generation, or final verification failure. It does not
+install or authenticate Codex, touch `~/.codex`, start a daemon, or build
+Paseo Desktop. Start and reach the local provider daemon explicitly before
+live verification:
 
-Both source manifests pin immutable commits. Bootstrap preflights Paseo and
-Better Harness in disposable locations before changing live state. Paseo uses
+```bash
+paseo daemon start
+paseo daemon status
+./install --verify
+```
+
+`./install --verify` is read-only and fails when the live Paseo provider
+inventory cannot be reached. Use `scripts/verify` for an installed-only
+diagnostic while the daemon is stopped. Repeating `./install --apply` is the
+upgrade path: it regenerates the three managed runtimes, preserves operator
+Codex files and existing runtime/session data, and retires only recognized,
+unchanged legacy artifacts.
+
+## Disposable container acceptance test
+
+With Docker available, one command exercises the public installer twice against
+a fresh, fake operator home:
+
+```bash
+make test-container
+```
+
+The test uses a digest-pinned Node 22 base with Debian's Python 3.11, mounts
+this checkout read-only, and supplies `tests/fixtures/model-catalog.json` so it
+does not need Codex API authentication. It downloads the pinned Paseo source
+and npm dependencies (excluding untested Electron/Playwright GUI binaries),
+but never mounts or copies the host's `~/.codex`, auth,
+sessions, plugins, or other operator data. A successful run prints the exact
+Codex role inventory, Paseo MCP recipients, runtime tree, and
+`CONTAINER_ACCEPTANCE_OK`.
+
+This Linux container checks installer topology, legacy-role rejection,
+repeatability, preservation, and real Paseo daemon startup with a provider RPC.
+Authenticated Codex sessions, Paseo Desktop/GUI behavior, and macOS
+signing/TCC/application restart remain operator checks.
+
+The Paseo source manifest pins an immutable commit. The public installer
+preflights Paseo in a disposable location before changing live state. Paseo uses
 `npm ci` and refuses custom Git hooks because its audited `prepare` lifecycle
 installs lefthook; updates are exact-pin/no-op or fast-forward-only and never
-silently pull from public upstream. Better Harness installation verifies the
-actual marketplace checkout commit and restores the previous Harness runtime if
-the live transition fails.
+silently pull from public upstream.
 
-The installer backs up every replaced file under:
+The installer backs up every replaced managed file and the Paseo checkout under
+`~/.codex-room-backups/core3-<UTC timestamp>-<pid>-<nanoseconds>/` with
+owner-only permissions. The coordinator owns the CLI-link backup as part of
+the same transaction; the delegated Paseo helper does not create a second
+backup. Customized obsolete files are preserved with a warning; only
+recognized, unchanged legacy artifacts are retired after backup.
 
-```text
-~/.codex-room-backups/install-<UTC timestamp>/
-```
+If `Ctrl-C` or `SIGTERM` arrives during apply, the installer settles its
+owned helper process group and rolls back the published state. A power loss or
+`SIGKILL` can interrupt before rollback and remains an operating-system
+durability limit; inspect the restricted transaction backup before retrying.
 
 It never writes to `~/.codex`.
 
@@ -94,60 +138,37 @@ restarts Paseo.
 | Supervisor | `gpt-5.6-sol` | medium | yes |
 | Lead | `gpt-5.6-sol` | medium | yes |
 | Peer | `gpt-5.6-sol` | medium | no |
-| Review (OCR-assisted stable candidate) | `gpt-5.6-luna` | max | no |
-| Harness (Better Harness coordinator) | `gpt-5.6-sol` | medium | yes |
-
-Lead sends premise, architecture, and macro review to a read-only Peer. Lead
-uses Review only for a frozen, bounded candidate that needs OCR-assisted file or
-rule selection. Lead does not run OCR. All role overlays currently request
-`danger-full-access` with `approval_policy = "never"`. Review additionally
-strips inherited MCP server tables. Read
+Human retains product, cost, external-effect, and irreversible-risk decisions.
+Supervisor routes Human intent and bounded recovery. Lead owns technical
+framing, dependency order, verification, and explicit candidate acceptance.
+Peer owns one bounded outcome and returns an immutable candidate or a concrete
+block signal. Lead may request a fresh read-only Peer review when independent
+judgment can change a technical decision. All role overlays currently request
+`danger-full-access` with `approval_policy = "never"`. Read
 [docs/architecture.md](docs/architecture.md) before changing these boundaries.
-
-Harness coordinates one Better Harness report over one explicitly selected role
-home. Its plugins are private to `~/.codex-runtime/harness`; the other four
-roles continue to share `~/.codex/plugins`. Harness dispatches exactly three
-fresh read-only Peer seats through Paseo while native Codex agents remain off.
-See [docs/better-harness-role.md](docs/better-harness-role.md) for the explicit,
-profile-local plugin installation and evidence-scope procedure. The audited
-fork and immutable commit are recorded in
-[`better-harness/source.toml`](better-harness/source.toml).
 
 ## Common operations
 
 ```bash
-# Regenerate all role runtimes after changing an overlay
+# Lower-level maintenance: regenerate all role runtimes after changing an overlay
 ./scripts/sync-all
 
 # Validate source only, without requiring installed runtimes
 ./scripts/verify --source
 
-# Include live Paseo checks
-./scripts/verify --live
+# Verify installed state and the live Paseo provider inventory
+./install --verify
 
-# Export sanitized runtime summaries for local comparison
+# Optional sanitized runtime summaries for local comparison
 ./scripts/export-runtime-snapshots
 
-# Summarize one Codex rollout session for benchmarking
-./scripts/session-usage --role peer --session-id SESSION_ID
-
-# Count workflow-pilot markers without exporting rollout content
-./scripts/workflow-pilot-report --format json /path/to/rollout.jsonl
 ```
 
-See [docs/session-usage-benchmark.md](docs/session-usage-benchmark.md) for token,
-request, tool-call, timing, and API-equivalent cost definitions.
-See [docs/workflow-pilot.md](docs/workflow-pilot.md) for the setup-only workflow
-experiment and the evidence threshold for adding Paseo enforcement.
-
-The workflow pilot also supports a guarded multiple-writer operation. Whenever
-at least two writable frontiers are ready, Lead runs a positive concurrency
-gate; the safe default remains `SERIAL`, and at most two writers may run at once
-in a repository. Admission requires separate worktrees at one exact base,
-independent physical and logical scopes, a frozen contract, and commit-only
-handoffs. Lead integrates the commits serially and verifies the composed result.
-See [docs/workflow-pilot.md](docs/workflow-pilot.md#guarded-multiple-writer-pilot)
-for the contract and [docs/operations.md](docs/operations.md#run-the-guarded-multiple-writer-pilot)
-for the runbook.
+The lower-level scripts are maintenance interfaces used by the public
+lifecycle and are not alternate fresh-install commands. See
+[docs/operations.md](docs/operations.md) for the single-writer handoff,
+candidate acceptance, and maintenance runbooks. The composed evidence and
+single final Human runbook are in
+[docs/acceptance/core4.md](docs/acceptance/core4.md).
 
 Official Codex configuration precedence is documented by OpenAI in the [Codex config basics](https://learn.chatgpt.com/docs/config-file/config-basic.md). `codex-room` uses a separate `CODEX_HOME` per role; this is a local orchestration layer, not a replacement for the operator's Codex installation.

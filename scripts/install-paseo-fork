@@ -11,8 +11,11 @@ target="${PASEO_REPO_DIR:-$HOME/projects/supervisors/paseo}"
 branch="${PASEO_BRANCH:-$(awk -F'"' '/^branch = / {print $2; exit}' "$REPO_ROOT/paseo/source.toml")}"
 verified_commit="${PASEO_VERIFIED_COMMIT:-$(awk -F'"' '/^verified_commit = / {print $2; exit}' "$REPO_ROOT/paseo/source.toml")}"
 cli_entrypoint="${PASEO_CLI_ENTRYPOINT:-packages/cli/bin/paseo}"
+cli_bundle="packages/cli/dist/index.js"
+server_bundle="packages/server/dist/scripts/supervisor-entrypoint.js"
 cli_link="${PASEO_CLI_LINK:-$HOME/.local/bin/paseo}"
 npm_bin="${PASEO_NPM_BIN:-npm}"
+coordinator_managed="${PASEO_COORDINATOR_MANAGED:-0}"
 require_command git
 require_command "$npm_bin"
 [[ "$verified_commit" =~ ^[0-9a-f]{40}$ ]] || die "invalid audited Paseo commit: $verified_commit"
@@ -29,9 +32,18 @@ check_hooks() {
   done
 }
 
+check_mutable_links() {
+  local repo="$1" metadata_link
+  [[ ! -L "$repo/.git" ]] || die "Paseo .git directory is a redirecting link"
+  metadata_link=$(find "$repo/.git" -type l -print -quit 2>/dev/null || true)
+  [[ -z "$metadata_link" ]] || die "Paseo Git metadata contains a redirecting link: $metadata_link"
+  [[ ! -L "$repo/node_modules" ]] || die "Paseo node_modules root is a redirecting link"
+}
+
 npm_ci_checked() {
   local repo="$1" before after hook lock_backup
   [[ -f "$repo/package-lock.json" ]] || die "Paseo package-lock.json is missing"
+  check_mutable_links "$repo"
   check_hooks "$repo"
   before=$(sha256_file "$repo/package-lock.json")
   lock_backup=$(mktemp "${TMPDIR:-/tmp}/paseo-lock.XXXXXX")
@@ -54,6 +66,20 @@ npm_ci_checked() {
   done
 }
 
+build_checked() {
+  local repo="$1" cli_target help_output
+  cli_target="$repo/$cli_entrypoint"
+  if ! (cd "$repo" && "$npm_bin" run build:server:clean); then
+    die "Paseo build:server:clean failed"
+  fi
+  [[ -f "$repo/$cli_bundle" && ! -L "$repo/$cli_bundle" ]] || die "Paseo CLI build output is missing: $repo/$cli_bundle"
+  [[ -f "$repo/$server_bundle" && ! -L "$repo/$server_bundle" ]] || die "Paseo server build output is missing: $repo/$server_bundle"
+  [[ -f "$cli_target" && ! -L "$cli_target" && -x "$cli_target" ]] || die "Paseo CLI entrypoint is missing or not executable: $cli_target"
+  if ! help_output=$(cd "$repo" && "./$cli_entrypoint" --help 2>&1); then
+    die "Paseo CLI --help failed: $cli_target${help_output:+; output: $help_output}"
+  fi
+}
+
 stage_exact() {
   local destination="$1"
   git init -q "$destination"
@@ -65,7 +91,7 @@ stage_exact() {
   git -C "$destination" config "branch.$branch.remote" origin
   git -C "$destination" config "branch.$branch.merge" "refs/heads/$branch"
   npm_ci_checked "$destination"
-  [[ -f "$destination/$cli_entrypoint" ]] || die "Paseo CLI entrypoint is missing from audited commit"
+  build_checked "$destination"
   [[ -z "$(git -C "$destination" status --porcelain --untracked-files=no)" ]] || die "Paseo lifecycle changed tracked files"
 }
 
@@ -124,6 +150,10 @@ fi
 publish_cli_link() {
   local cli_target="$target/$cli_entrypoint" backup_root
   [[ -f "$cli_target" ]] || die "Paseo CLI entrypoint is missing: $cli_target"
+  # The public coordinator snapshots and publishes this managed link as part
+  # of its one transaction. Do not create the historical independent backup
+  # or publication side effect when it owns the lifecycle.
+  [[ "$coordinator_managed" == 1 ]] && return 0
   mkdir -p "$(dirname "$cli_link")"
   if [[ -e "$cli_link" || -L "$cli_link" ]]; then
     if [[ -L "$cli_link" && "$(readlink "$cli_link")" == "$cli_target" ]]; then return; fi
@@ -167,6 +197,7 @@ fi
 git -C "$target" config "branch.$branch.remote" origin
 git -C "$target" config "branch.$branch.merge" "refs/heads/$branch"
 npm_ci_checked "$target"
+build_checked "$target"
 [[ -z "$(git -C "$target" status --porcelain --untracked-files=no)" ]] || die "Paseo lifecycle changed tracked files"
 publish_cli_link
 log "PASEO_FORK_READY"

@@ -9,20 +9,14 @@ for argument in "$@"; do
   case "$argument" in
     --source) mode=source ;;
     --live) live=true ;;
-    -h|--help)
-      echo "Usage: scripts/verify [--source] [--live]"
-      exit 0
-      ;;
+    -h|--help) echo "Usage: scripts/verify [--source] [--live]"; exit 0 ;;
     *) die "unknown argument: $argument" ;;
   esac
 done
 
 require_command python3
 require_command jq
-if [[ "$mode" == installed ]]; then
-  require_command codex
-  require_command ocr
-fi
+[[ "$mode" == source ]] || require_command codex
 
 failures=0
 check() {
@@ -41,61 +35,207 @@ if [[ "$mode" == source ]]; then
   overlays_root="$REPO_ROOT/home/.config/codex-room/overlays"
   workflow_root="$REPO_ROOT/home/.config/codex-room/workflow"
   sync_path="$REPO_ROOT/home/.local/bin/codex-room-sync"
+  launcher_path="$REPO_ROOT/home/.local/bin/codex-room"
+  obsolete_paths=(
+    "$overlays_root/review.config.toml"
+    "$overlays_root/harness.config.toml"
+    "$REPO_ROOT/home/.config/codex-room/paseo.phase2-coexist.candidate.json.template"
+    "$REPO_ROOT/home/.config/codex-room/paseo.phase2-hard-cut.candidate.json.template"
+    "$REPO_ROOT/home/.local/bin/codex-room-hard-cut"
+    "$REPO_ROOT/home/.local/bin/codex-review-apply"
+  )
 else
   config_template="$HOME/.paseo/config.json"
   overlays_root="$HOME/.config/codex-room/overlays"
   workflow_root="$HOME/.config/codex-room/workflow"
   sync_path="$HOME/.local/bin/codex-room-sync"
+  launcher_path="$HOME/.local/bin/codex-room"
+  obsolete_paths=(
+    "$overlays_root/review.config.toml"
+    "$overlays_root/harness.config.toml"
+    "$HOME/.config/codex-room/paseo.phase2-coexist.candidate.json"
+    "$HOME/.config/codex-room/paseo.phase2-hard-cut.candidate.json"
+    "$HOME/.local/bin/codex-room-hard-cut"
+    "$HOME/.local/bin/codex-review-apply"
+  )
 fi
 
 check "Paseo config exists" test -f "$config_template"
 check "Paseo config is valid JSON" jq -e . "$config_template"
 check "room sync exists" test -f "$sync_path"
+check "room launcher is executable" test -x "$launcher_path"
 check "workspace protocol exists" test -f "$workflow_root/WORKSPACE_PROTOCOL.md"
-check "workflow pilot reporter is executable" test -x "$REPO_ROOT/scripts/workflow-pilot-report"
 check "Paseo provenance manifest exists" test -f "$REPO_ROOT/paseo/source.toml"
-check "Better Harness provenance manifest exists" test -f "$REPO_ROOT/better-harness/source.toml"
 
-for role in supervisor lead peer review harness; do
+for role in supervisor lead peer; do
   check "$role overlay exists" test -f "$overlays_root/$role.config.toml"
 done
+path_is_absent() {
+  [[ ! -e "$1" && ! -L "$1" ]]
+}
 
-for marker in \
-  "FRONTIER_BRIEF v1" \
-  "FOUNDATION_CHECK v1" \
-  "PEER_DISPOSITION v1" \
-  "LEAD_RULING v1" \
-  "PLAN_RECONCILIATION v1" \
-  "PARALLEL_CHECK v1"; do
-  check "workspace protocol includes $marker" grep -Fq "$marker" "$workflow_root/WORKSPACE_PROTOCOL.md"
+preserved_obsolete_path() {
+  [[ "${CODEX_ROOM_ALLOW_PRESERVED_OBSOLETE:-}" == 1 ]] || return 1
+  [[ "$mode" == installed && ( -e "$1" || -L "$1" ) ]] || return 1
+  # Legacy installs wrote regular files.  A link or directory is therefore
+  # operator-owned/customized material; retain it under the public installer
+  # while keeping the default verifier strict for direct maintenance checks.
+  if [[ -L "$1" || ! -f "$1" ]]; then
+    return 0
+  fi
+  local digest
+  local expected_mode
+  case "${1#$HOME/}" in
+    .config/codex-room/overlays/review.config.toml|.config/codex-room/overlays/harness.config.toml|.config/codex-room/paseo.phase2-coexist.candidate.json|.config/codex-room/paseo.phase2-hard-cut.candidate.json)
+      expected_mode=600 ;;
+    .local/bin/codex-room-hard-cut|.local/bin/codex-review-apply)
+      expected_mode=700 ;;
+    .config/codex-room/workflow/ANTI_PATTERNS.md|.config/codex-room/workflow/SUPERVISOR_NOTEBOOK.md)
+      expected_mode=644 ;;
+    *) return 1 ;;
+  esac
+  local actual_mode
+  actual_mode=$(stat -c '%a' "$1" 2>/dev/null || stat -f '%Lp' "$1")
+  [[ "$actual_mode" == "$expected_mode" ]] || return 0
+  digest=$(sha256_file "$1")
+  historical_rendered_digest() {
+    local template="$1"
+    python3 - "$template" "$HOME" <<'PY'
+import hashlib
+import pathlib
+import sys
+
+template = pathlib.Path(sys.argv[1]).read_bytes()
+home = sys.argv[2].encode()
+print(hashlib.sha256(template.replace(b"@@HOME@@", home)).hexdigest())
+PY
+  }
+  case "${1#$HOME/}" in
+    .config/codex-room/overlays/review.config.toml)
+      [[ "$digest" != bd6658ce6fbd53a6904e41752f31493fea77ae76b974cde881dc254b89aa9e94 ]] ;;
+    .config/codex-room/overlays/harness.config.toml)
+      [[ "$digest" != f963efcd545237153ac33382c12930df97afc50b08712751f442e80c6f502889 ]] ;;
+    .config/codex-room/paseo.phase2-coexist.candidate.json)
+      [[ "$digest" != "$(historical_rendered_digest "$REPO_ROOT/paseo/legacy/paseo.phase2-coexist.candidate.json.template")" ]] ;;
+    .config/codex-room/paseo.phase2-hard-cut.candidate.json)
+      [[ "$digest" != "$(historical_rendered_digest "$REPO_ROOT/paseo/legacy/paseo.phase2-hard-cut.candidate.json.template")" ]] ;;
+    .local/bin/codex-room-hard-cut)
+      [[ "$digest" != 86efcfd46a25940353c889a938a8b901e9cd04e499a93287f7bda0696dbf041a ]] ;;
+    .local/bin/codex-review-apply)
+      [[ "$digest" != df86d65034f2be7441cabf71319f1b6d9bf1e92c8a6bba72dbb46bc4e99d6262 ]] ;;
+    .config/codex-room/workflow/ANTI_PATTERNS.md)
+      [[ "$digest" != b25baaf4f632a41fb1761bc8ac7b14258b7afd011a27d2c71833d9b027109972 ]] ;;
+    .config/codex-room/workflow/SUPERVISOR_NOTEBOOK.md)
+      [[ "$digest" != d644212642909ba20c4960503f89ef74b4897e39cf4096f5c9c1df2c686d430f ]] ;;
+    *) return 1 ;;
+  esac
+}
+
+obsolete_is_inactive() {
+  path_is_absent "$1" || preserved_obsolete_path "$1"
+}
+for obsolete_path in "${obsolete_paths[@]}"; do
+  check "obsolete path is inactive: $obsolete_path" obsolete_is_inactive "$obsolete_path"
 done
 
-check "five derived Codex providers" jq -e '
+if [[ "$mode" == source ]]; then
+  for historical_fixture in \
+    "$REPO_ROOT/paseo/legacy/paseo.phase2-coexist.candidate.json.template" \
+    "$REPO_ROOT/paseo/legacy/paseo.phase2-hard-cut.candidate.json.template"; do
+    check "historical rendered obsolete fixture exists: $historical_fixture" test -f "$historical_fixture"
+  done
+  for retired_source in \
+    "$REPO_ROOT/scripts/bootstrap" \
+    "$REPO_ROOT/scripts/session-usage" \
+    "$REPO_ROOT/docs/session-usage-benchmark.md" \
+    "$REPO_ROOT/docs/specs/2026-08-30-harness-plugin-registration-persistence.md" \
+    "$REPO_ROOT/tests/fixtures/session-usage.jsonl" \
+    "$workflow_root/ANTI_PATTERNS.md" \
+    "$workflow_root/SUPERVISOR_NOTEBOOK.md" \
+    "$REPO_ROOT/scripts/workflow-pilot-report" \
+    "$REPO_ROOT/docs/workflow-pilot.md" \
+    "$REPO_ROOT/docs/better-harness-role.md" \
+    "$REPO_ROOT/better-harness/source.toml" \
+    "$REPO_ROOT/tests/test_multiple_writers.py" \
+    "$REPO_ROOT/tests/fixtures/workflow-pilot.jsonl"; do
+    check "retired workflow source is absent: $retired_source" path_is_absent "$retired_source"
+  done
+fi
+
+rejects_legacy_role() {
+  ! "$launcher_path" "$1" >/dev/null 2>&1
+}
+check "launcher rejects Review role" rejects_legacy_role review
+check "launcher rejects Harness role" rejects_legacy_role harness
+check "launcher has one public role route" bash -c '! grep -Fq -- "--resolve-evidence-home" "$1"' bash "$launcher_path"
+
+check "Human authority is explicit" grep -Fq "Human owns product goals" "$workflow_root/WORKSPACE_PROTOCOL.md"
+check "Lead acceptance is explicit" grep -Fq "explicitly accepts or rejects" "$workflow_root/WORKSPACE_PROTOCOL.md"
+check "single writable Peer boundary is explicit" grep -Fq "at most one active" "$workflow_root/WORKSPACE_PROTOCOL.md"
+check "Peer challenge signals are explicit" grep -Fq "REOPEN_REQUEST" "$workflow_root/WORKSPACE_PROTOCOL.md"
+check "event-driven waiting is explicit" grep -Fq "repeatedly polling unchanged state" "$workflow_root/WORKSPACE_PROTOCOL.md"
+
+for active_contract in \
+  "$workflow_root/WORKSPACE_PROTOCOL.md" \
+  "$overlays_root/supervisor.config.toml" \
+  "$overlays_root/lead.config.toml" \
+  "$overlays_root/peer.config.toml"; do
+  for forbidden in "PARALLEL_CHECK" "multiple-writer" "OCR Review" "Better Harness" "workflow pilot"; do
+    check "active contract omits $forbidden" bash -c '! grep -Fqi -- "$1" "$2"' bash "$forbidden" "$active_contract"
+  done
+done
+
+check "exactly three derived Codex providers" jq -e '
   [.agents.providers | keys[] | select(startswith("codex-"))] |
-  sort == ["codex-harness", "codex-lead", "codex-peer", "codex-review", "codex-supervisor"]
+  sort == ["codex-lead", "codex-peer", "codex-supervisor"]
 ' "$config_template"
-check "MCP injection boundary" jq -e '
-  .daemon.mcp.injectIntoProviders == ["codex-supervisor", "codex-lead", "codex-harness"]
-' "$config_template"
-check "harness defaults to Sol Medium" jq -e '
-  .agents.providers["codex-harness"].models[0] |
-  .id == "gpt-5.6-sol" and .isDefault == true and
-  .thinkingOptions[0].id == "medium" and .thinkingOptions[0].isDefault == true
-' "$config_template"
-check "review defaults to Luna Max" jq -e '
-  .agents.providers["codex-review"].models[0] |
-  .id == "gpt-5.6-luna" and .isDefault == true and
-  .thinkingOptions[0].id == "max" and .thinkingOptions[0].isDefault == true
+check "exact MCP injection boundary" jq -e '
+  .daemon.mcp.injectIntoProviders == ["codex-supervisor", "codex-lead"]
 ' "$config_template"
 
 if [[ "$mode" == installed ]]; then
-  expected_ocr_version=$(awk -F'"' '/^open_code_review = / {print $2}' "$REPO_ROOT/paseo/versions.toml")
-  actual_ocr_version=$(ocr --version 2>/dev/null | sed -n 's/^open-code-review v\([^ ]*\).*/\1/p')
-  check "Open Code Review version" test "$actual_ocr_version" = "$expected_ocr_version"
+  toml_python="${CODEX_ROOM_TOML_PYTHON:-python3.11}"
+  require_command "$toml_python"
+  runtime_policy_disabled() {
+    "$toml_python" - "$1" <<'PY'
+import pathlib
+import sys
+try:
+    import tomllib
+except ImportError:
+    raise SystemExit("ERROR: runtime verification requires a Python interpreter with tomllib (3.11+)")
+
+try:
+    with pathlib.Path(sys.argv[1]).open("rb") as stream:
+        config = tomllib.load(stream)
+except (OSError, tomllib.TOMLDecodeError) as error:
+    raise SystemExit(f"ERROR: cannot read runtime TOML {sys.argv[1]}: {error}")
+
+if config.get("agents", {}).get("enabled") is not False:
+    raise SystemExit("ERROR: agents.enabled must be false in the Room runtime")
+features = config.get("features", {})
+v2 = features.get("multi_agent_v2")
+v2_disabled = v2 is False or (isinstance(v2, dict) and v2.get("enabled") is False)
+if features.get("multi_agent") is not False or not v2_disabled:
+    raise SystemExit("ERROR: features.multi_agent and multi_agent_v2 must be disabled in the Room runtime")
+PY
+  }
   paseo_checkout="${PASEO_REPO_DIR:-$HOME/projects/supervisors/paseo}"
+  paseo_cli_link="${PASEO_CLI_LINK:-$HOME/.local/bin/paseo}"
   expected_paseo_cli="$paseo_checkout/packages/cli/bin/paseo"
+  expected_paseo_cli_bundle="$paseo_checkout/packages/cli/dist/index.js"
+  expected_paseo_server_bundle="$paseo_checkout/packages/server/dist/scripts/supervisor-entrypoint.js"
   check "Paseo CLI links to local fork" test \
-    "$(readlink "$HOME/.local/bin/paseo" 2>/dev/null || true)" = "$expected_paseo_cli"
+    "$(readlink "$paseo_cli_link" 2>/dev/null || true)" = "$expected_paseo_cli"
+  check "Paseo CLI entrypoint is executable" test -x "$expected_paseo_cli"
+  check "Paseo CLI bundle exists" test -f "$expected_paseo_cli_bundle"
+  check "Paseo CLI bundle is a direct file" test ! -L "$expected_paseo_cli_bundle"
+  check "Paseo daemon runner exists" test -f "$expected_paseo_server_bundle"
+  check "Paseo daemon runner is a direct file" test ! -L "$expected_paseo_server_bundle"
+  paseo_cli_help() {
+    (cd "$paseo_checkout" && "./packages/cli/bin/paseo" --help >/dev/null 2>&1)
+  }
+  check "Paseo CLI --help runs" paseo_cli_help
   expected_paseo_commit=$(awk -F'"' '/^verified_commit = / {print $2}' "$REPO_ROOT/paseo/source.toml")
   expected_paseo_branch=$(awk -F'"' '/^branch = / {print $2; exit}' "$REPO_ROOT/paseo/source.toml")
   expected_paseo_fork=$(awk -F'"' '/^fork = / {print $2; exit}' "$REPO_ROOT/paseo/source.toml")
@@ -106,58 +246,38 @@ if [[ "$mode" == installed ]]; then
   check "Paseo upstream is public" test "$(git -C "$paseo_checkout" remote get-url upstream 2>/dev/null || true)" = "$expected_paseo_upstream"
   check "Paseo branch tracks origin" test "$(git -C "$paseo_checkout" config --get "branch.$expected_paseo_branch.remote" 2>/dev/null || true)" = origin
   check "Paseo tracking ref" test "$(git -C "$paseo_checkout" config --get "branch.$expected_paseo_branch.merge" 2>/dev/null || true)" = "refs/heads/$expected_paseo_branch"
-  for role in supervisor lead peer review harness; do
-    runtime="$HOME/.codex-runtime/$role"
+  runtime_root="${CODEX_ROOM_RUNTIME_ROOT:-$HOME/.codex-runtime}"
+  for role in supervisor lead peer; do
+    runtime="$runtime_root/$role"
     check "$role runtime config" test -f "$runtime/config.toml"
     check "$role native agent catalog" test -f "$runtime/model-catalog.no-native-agents.json"
-    if [[ -f "$runtime/config.toml" ]]; then
-      check "$role agents disabled" grep -Eq '^multi_agent(_v2)? = false$' "$runtime/config.toml"
+    if [[ -f "$runtime/model-catalog.no-native-agents.json" ]]; then
+      check "$role model agent metadata disabled" jq -e \
+        '.models | type == "array" and length > 0 and all(.[]; .multi_agent_version == null)' \
+        "$runtime/model-catalog.no-native-agents.json"
     fi
-  done
-  for role in supervisor lead peer review; do
-    check "$role plugins use canonical symlink" test \
-      "$(readlink "$HOME/.codex-runtime/$role/plugins" 2>/dev/null || true)" = "$HOME/.codex/plugins"
-  done
-  check "harness plugins are private" test -d "$HOME/.codex-runtime/harness/plugins"
-  check "harness plugins are not a symlink" test ! -L "$HOME/.codex-runtime/harness/plugins"
-  expected_harness_source=$(awk -F'"' '/^fork = / {print $2; exit}' "$REPO_ROOT/better-harness/source.toml")
-  expected_harness_ref=$(awk -F'"' '/^verified_commit = / {print $2}' "$REPO_ROOT/better-harness/source.toml")
-  if CODEX_HOME="$HOME/.codex-runtime/harness" codex plugin list \
-    --marketplace better-harness --json 2>/dev/null |
-    jq -e 'any(.installed[]?; .pluginId == "better-harness@better-harness" and .installed == true and .enabled == true)' >/dev/null; then
-    log "OK    Better Harness is installed and enabled"
-  else
-    log "FAIL  Better Harness is not installed and enabled"
-    failures=$((failures + 1))
-  fi
-  harness_marketplace=$(awk -F'"' '/^marketplace = / {print $2}' "$REPO_ROOT/better-harness/source.toml")
-  marketplace_json=$(CODEX_HOME="$HOME/.codex-runtime/harness" codex plugin marketplace list --json 2>/dev/null || true)
-  harness_root=$(jq -er --arg name "$harness_marketplace" --arg source "$expected_harness_source" '.marketplaces[] | select(.name == $name and .marketplaceSource.sourceType == "git" and .marketplaceSource.source == $source) | .root' <<<"$marketplace_json" 2>/dev/null || true)
-  if [[ -n "$harness_root" && "$(git -C "$harness_root" rev-parse HEAD 2>/dev/null || true)" == "$expected_harness_ref" ]]; then
-    log "OK    Better Harness marketplace root is audited commit"
-  else
-    log "FAIL  Better Harness marketplace root is not audited commit"
-    failures=$((failures + 1))
-  fi
-  for role in review harness; do
-    if [[ -f "$HOME/.codex-runtime/$role/config.toml" ]]; then
-      if grep -Eq '^\[mcp_servers\.' "$HOME/.codex-runtime/$role/config.toml"; then
-        log "FAIL  $role inherited MCP servers"
-        failures=$((failures + 1))
+    if [[ -f "$runtime/config.toml" ]]; then
+      if policy_result=$(runtime_policy_disabled "$runtime/config.toml" 2>&1); then
+        log "OK    $role native-agent policy disabled"
       else
-        log "OK    $role has no inherited MCP servers"
+        log "FAIL  $role native-agent policy disabled"
+        printf '%s\n' "$policy_result" >&2
+        failures=$((failures + 1))
       fi
     fi
+    check "$role plugins use canonical symlink" test \
+      "$(readlink "$runtime/plugins" 2>/dev/null || true)" = "$HOME/.codex/plugins"
   done
 fi
 
 if [[ "$live" == true ]]; then
-  require_command paseo
+  paseo_command="${PASEO_COMMAND:-${PASEO_CLI_LINK:-paseo}}"
+  require_command "$paseo_command"
   inventory_file=$(mktemp "${TMPDIR:-/tmp}/codex-room-provider-check.XXXXXX")
-  if paseo provider ls --host 127.0.0.1:6767 --json >"$inventory_file" 2>/dev/null; then
-    check "live custom provider inventory" jq -e '
-      [.[].provider] as $p |
-      all(["codex-supervisor", "codex-lead", "codex-peer", "codex-review", "codex-harness"][]; . as $id | $p | index($id) != null)
+  if "$paseo_command" provider ls --host 127.0.0.1:6767 --json >"$inventory_file" 2>/dev/null; then
+    check "exact live room provider inventory" jq -e '
+      [.[].provider | select(startswith("codex-"))] | sort ==
+      ["codex-lead", "codex-peer", "codex-supervisor"]
     ' "$inventory_file"
   else
     log "FAIL  live Paseo provider inventory is unreachable"

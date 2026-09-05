@@ -5,7 +5,7 @@
 ```text
 ~/.config/codex-room/model-instructions.md
 ~/.config/codex-room/overlays/*.config.toml
-~/.config/codex-room/workflow/*.md
+~/.config/codex-room/workflow/WORKSPACE_PROTOCOL.md
 ~/.local/bin/codex-room
 ~/.local/bin/codex-room-sync
 ~/.local/bin/paseo -> ~/projects/supervisors/paseo/packages/cli/bin/paseo
@@ -13,8 +13,10 @@
 ~/.paseo/config.json
 ```
 
-The repository stores HOME-dependent JSON as `*.template`; installation renders it to the path without `.template`.
-The Paseo CLI symlink is created by `scripts/install-paseo-fork`, after the checkout is available.
+The repository stores HOME-dependent JSON as `*.template`; `./install --apply`
+renders it to the path without `.template`. The public installer creates the
+Paseo CLI symlink after the checkout is available. `scripts/install-paseo-fork`
+is a lower-level maintenance helper used by that lifecycle.
 
 ## Generated files
 
