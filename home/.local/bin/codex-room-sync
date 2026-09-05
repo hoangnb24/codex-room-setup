@@ -26,10 +26,6 @@ OVERRIDE_KEYS = {
 }
 SHARED_CODEX_RESOURCES = ("auth.json", "AGENTS.md", "hooks.json", "skills", "plugins")
 SHARED_ROOM_RESOURCES = ("model-instructions.md",)
-SHARED_WORKFLOW_RESOURCES = (
-    "ANTI_PATTERNS.md",
-)
-LEGACY_RUNTIME_LINKS = ("WORKSPACE_PROTOCOL.md",)
 
 
 def resolved_path(env_name: str, default: pathlib.Path) -> pathlib.Path:
@@ -46,7 +42,6 @@ def deployment_paths() -> dict[str, pathlib.Path]:
             "overlays": root / "canonical",
             "codex_shared": root / "canonical",
             "room_shared": root / "canonical",
-            "workflow": root / "room-workflow",
             "runtime": resolved_path("CODEX_ROOM_RUNTIME_ROOT", root / ".runtime"),
         }
 
@@ -58,7 +53,6 @@ def deployment_paths() -> dict[str, pathlib.Path]:
         "overlays": room_config / "overlays",
         "codex_shared": codex_home,
         "room_shared": room_config,
-        "workflow": room_config / "workflow",
         "runtime": resolved_path("CODEX_ROOM_RUNTIME_ROOT", home / ".codex-runtime"),
     }
 
@@ -139,14 +133,6 @@ def preflight_link(runtime: pathlib.Path, name: str, target: pathlib.Path) -> No
         raise SystemExit(f"refusing to replace non-symlink runtime path: {path}")
 
 
-def remove_legacy_link(runtime: pathlib.Path, name: str) -> None:
-    path = runtime / name
-    if path.is_symlink():
-        path.unlink()
-    elif path.exists():
-        raise SystemExit(f"refusing to remove non-symlink runtime path: {path}")
-
-
 def source_catalog() -> dict:
     fixture = os.environ.get("CODEX_ROOM_MODEL_CATALOG")
     if fixture:
@@ -204,18 +190,6 @@ def main() -> None:
         preflight_link(runtime, name, paths["codex_shared"] / name)
     for name in SHARED_ROOM_RESOURCES:
         preflight_link(runtime, name, paths["room_shared"] / name)
-    for name in SHARED_WORKFLOW_RESOURCES:
-        preflight_link(runtime, name, paths["workflow"] / name)
-    for name in LEGACY_RUNTIME_LINKS:
-        legacy_path = runtime / name
-        if legacy_path.exists() and not legacy_path.is_symlink():
-            raise SystemExit(f"refusing to remove non-symlink runtime path: {legacy_path}")
-    if role == "supervisor":
-        notebook = runtime / "SUPERVISOR_NOTEBOOK.md"
-        notebook_template = paths["workflow"] / "SUPERVISOR_NOTEBOOK.md"
-        if not notebook.exists() and not notebook_template.exists():
-            raise SystemExit(f"Supervisor notebook template does not exist: {notebook_template}")
-
     offset = top_level_table_offset(base)
     overrides = scalar_overrides(overlay)
     overrides["model_catalog_json"] = json.dumps(str(model_catalog))
@@ -239,16 +213,6 @@ def main() -> None:
         safe_link(runtime, name, paths["codex_shared"] / name)
     for name in SHARED_ROOM_RESOURCES:
         safe_link(runtime, name, paths["room_shared"] / name)
-    for name in SHARED_WORKFLOW_RESOURCES:
-        safe_link(runtime, name, paths["workflow"] / name)
-    for name in LEGACY_RUNTIME_LINKS:
-        remove_legacy_link(runtime, name)
-    if role == "supervisor":
-        notebook = runtime / "SUPERVISOR_NOTEBOOK.md"
-        notebook_template = paths["workflow"] / "SUPERVISOR_NOTEBOOK.md"
-        if not notebook.exists():
-            write_atomic(notebook, notebook_template.read_text())
-
     # App-server reserves stdout for its JSONL protocol. Keep sync diagnostics on
     # stderr so the launcher cannot corrupt the provider stream.
     print(runtime, file=sys.stderr)

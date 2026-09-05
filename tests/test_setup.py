@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 import re
@@ -18,7 +19,6 @@ SYNC = HOME_MIRROR / ".local" / "bin" / "codex-room-sync"
 LAUNCHER = HOME_MIRROR / ".local" / "bin" / "codex-room"
 SYNC_ALL = ROOT / "scripts" / "sync-all"
 SESSION_USAGE = ROOT / "scripts" / "session-usage"
-WORKFLOW_PILOT_REPORT = ROOT / "scripts" / "workflow-pilot-report"
 
 
 class SetupShapeTests(unittest.TestCase):
@@ -145,9 +145,13 @@ class SetupShapeTests(unittest.TestCase):
             self.assertIn(str(fake_home / ".local" / "bin" / "codex-room"), paseo_config.read_text())
             protocol = fake_home / ".config" / "codex-room" / "workflow" / "WORKSPACE_PROTOCOL.md"
             self.assertTrue(protocol.is_file())
-            self.assertIn("FRONTIER_BRIEF v1", protocol.read_text())
+            self.assertIn("Lead keeps at most one active", protocol.read_text())
+            self.assertFalse((fake_home / ".config/codex-room/workflow/ANTI_PATTERNS.md").exists())
+            self.assertFalse((fake_home / ".config/codex-room/workflow/SUPERVISOR_NOTEBOOK.md").exists())
             notebook = fake_home / ".config" / "codex-room" / "workflow" / "SUPERVISOR_NOTEBOOK.md"
             notebook.write_text("# Runtime learning\n")
+            anti_patterns = fake_home / ".config" / "codex-room" / "workflow" / "ANTI_PATTERNS.md"
+            anti_patterns.write_bytes(b"private workflow notes\x00")
             second_install = subprocess.run(
                 [str(ROOT / "scripts" / "install"), "--apply"],
                 check=True,
@@ -156,7 +160,8 @@ class SetupShapeTests(unittest.TestCase):
                 text=True,
             )
             self.assertEqual(notebook.read_text(), "# Runtime learning\n")
-            self.assertIn("PRESERVED  ~/.config/codex-room/workflow/SUPERVISOR_NOTEBOOK.md", second_install.stdout)
+            self.assertEqual(anti_patterns.read_bytes(), b"private workflow notes\x00")
+            self.assertNotIn("SUPERVISOR_NOTEBOOK", second_install.stdout)
             self.assertEqual(
                 sorted(path.name for path in (fake_home / ".config/codex-room/overlays").glob("*.config.toml")),
                 ["lead.config.toml", "peer.config.toml", "supervisor.config.toml"],
@@ -458,8 +463,6 @@ class SetupShapeTests(unittest.TestCase):
 
     def test_fork_provenance_and_update_sources_are_explicit(self) -> None:
         paseo_source = (ROOT / "paseo" / "source.toml").read_text()
-        harness_source = (ROOT / "better-harness" / "source.toml").read_text()
-        harness_guide = (ROOT / "docs" / "better-harness-role.md").read_text()
         updater = (HOME_MIRROR / ".local" / "bin" / "paseo-local-update").read_text()
 
         self.assertIn('fork = "git@github.com:hoangnb24/paseo.git"', paseo_source)
@@ -467,16 +470,6 @@ class SetupShapeTests(unittest.TestCase):
             'verified_commit = "8511089eaeb06cddd049b629562926822020de5c"',
             paseo_source,
         )
-        self.assertIn(
-            'fork = "https://github.com/hoangnb24/better-harness.git"',
-            harness_source,
-        )
-        self.assertIn(
-            'verified_commit = "ef5253ca2e201d46a7071c3fc9c1de7237d3f86c"',
-            harness_source,
-        )
-        self.assertIn("github.com/hoangnb24/better-harness.git", harness_guide)
-        self.assertNotIn("github.com/QoderAI/better-harness.git \\", harness_guide)
         for forbidden in ("git pull", "git rebase", "git reset", "npm install"):
             self.assertNotIn(forbidden, updater)
         self.assertIn('git ls-remote "$PASEO_FORK_URL"', updater)
@@ -538,8 +531,12 @@ class SetupShapeTests(unittest.TestCase):
                 " case \"$2\" in \"$PASEO_REPO_DIR\") echo 8511089eaeb06cddd049b629562926822020de5c ;; *) exec /usr/bin/git \"$@\" ;; esac\n"
                 "else exec /usr/bin/git \"$@\"; fi\n"
             )
+            toml_python = "/opt/homebrew/opt/python@3.12/libexec/bin/python3"
+            if not Path(toml_python).is_file():
+                toml_python = sys.executable
             env = os.environ.copy(); env.update({
                 "HOME": str(home), "PASEO_REPO_DIR": str(paseo), "OCR_LOG": str(root / "ocr.log"),
+                "CODEX_ROOM_TOML_PYTHON": toml_python,
                 "PATH": str(bin_dir) + os.pathsep + env["PATH"],
             })
             completed = subprocess.run([str(ROOT / "scripts/verify")], env=env, capture_output=True, text=True)
@@ -731,80 +728,48 @@ class SetupShapeTests(unittest.TestCase):
         )
         self.assertAlmostEqual(summary["estimated_api_cost_usd"], 0.017)
 
-    def test_workflow_pilot_report_counts_only_assistant_markers(self) -> None:
-        fixture = ROOT / "tests" / "fixtures" / "workflow-pilot.jsonl"
-        completed = subprocess.run(
-            [str(WORKFLOW_PILOT_REPORT), "--format", "json", str(fixture)],
-            check=True,
-            capture_output=True,
-            text=True,
-        )
-        summary = json.loads(completed.stdout)
-
-        self.assertEqual(summary["assistant_messages_scanned"], 4)
-        self.assertEqual(summary["markers"]["FRONTIER_BRIEF v1"], 1)
-        self.assertEqual(summary["markers"]["PLAN_RECONCILIATION v1"], 1)
-        self.assertEqual(summary["peer_dispositions"]["REOPEN_REQUEST"], 1)
-        self.assertEqual(summary["lead_rulings"]["REVISE_PLAN"], 1)
-        self.assertEqual(summary["foundation_statuses"]["FOUNDATION_REQUIRED"], 1)
-        self.assertEqual(summary["parallel_decisions"]["SERIAL"], 1)
-        self.assertEqual(summary["reconciliation_plan_updates"]["yes"], 1)
-        self.assertEqual(summary["warnings"], [])
-
-    def test_workflow_pilot_contracts_are_present_in_protocol_and_roles(self) -> None:
+    def test_minimum_role_contracts_have_capabilities_without_pilot_ceremony(self) -> None:
         protocol = (ROOM / "workflow" / "WORKSPACE_PROTOCOL.md").read_text()
-        for marker in (
-            "FRONTIER_BRIEF v1",
-            "FOUNDATION_CHECK v1",
-            "PEER_DISPOSITION v1",
-            "LEAD_RULING v1",
-            "PLAN_RECONCILIATION v1",
-            "PARALLEL_CHECK v1",
+        for capability in (
+            "Human owns product goals",
+            "Supervisor observes",
+            "Lead owns project framing",
+            "Peer owns one bounded outcome",
+            "at most one active",
+            "immutable candidate",
+            "REOPEN_REQUEST",
+            "DEPENDENCY_REQUEST",
+            "BLOCKED",
+            "fresh read-only Peer",
+            "explicitly accepts or rejects",
+            "repeatedly polling unchanged state",
         ):
-            self.assertIn(marker, protocol)
+            self.assertIn(capability, protocol)
 
         lead = (ROOM / "overlays" / "lead.config.toml").read_text()
         peer = (ROOM / "overlays" / "peer.config.toml").read_text()
         supervisor = (ROOM / "overlays" / "supervisor.config.toml").read_text()
-        self.assertIn("FOUNDATION_CHECK v1", lead)
-        self.assertIn("PLAN_RECONCILIATION v1", lead)
-        self.assertIn("NO_REVIEW", lead)
-        self.assertIn("FAST", lead)
-        self.assertIn("review_mode: EXPLORATORY | CLOSEOUT", lead)
-        self.assertIn("read-only Peer", lead)
+        self.assertIn("at most one active writable Peer", lead)
+        self.assertIn("fresh read-only Peer", lead)
+        self.assertIn("explicitly ACCEPT or REJECT", lead)
+        self.assertFalse((ROOM / "overlays" / "review.config.toml").exists())
         self.assertNotIn("codex-review", lead)
-
-        lead = (ROOM / "overlays" / "lead.config.toml").read_text()
-        self.assertIn("Every\n`CLOSEOUT` brief uses `review_class: FAST`", lead)
-        self.assertIn("`review_model_actual`", lead)
-        self.assertIn("do not emit updates that only say no event has arrived", lead)
-
-        self.assertIn("Review classes and close-out", protocol)
-        self.assertIn("one correction batch", protocol)
-        self.assertIn("PEER_DISPOSITION v1", peer)
-        self.assertIn("workflow pilot", supervisor)
-
-    def test_lead_review_is_pull_based(self) -> None:
-        lead = (ROOM / "overlays" / "lead.config.toml").read_text()
-        expected = """
-            Review is pull-based. A new diff, commit, frontier, or completed Peer task is
-            not itself a review trigger. Dispatch independent review only when its result
-            can change the next technical decision and deterministic checks cannot answer
-            the concern more cheaply. Review a premise early when a wrong choice would lock
-            architecture or lifecycle. Before an irreversible or owner-gated action,
-            review only when material residual risk remains after owning checks. Otherwise,
-            batch related work at one stable integration or acceptance boundary.
-        """
-        self.assertIn(" ".join(expected.split()), " ".join(lead.split()))
+        self.assertIn("REOPEN_REQUEST", peer)
+        self.assertIn("DEPENDENCY_REQUEST", peer)
+        self.assertIn("BLOCKED", peer)
+        self.assertIn("Do not spawn, manage, or coordinate other agents", peer)
+        self.assertIn("faithfully routes Human intent", protocol)
+        self.assertIn("bounded recovery", supervisor)
+        for active in (protocol, lead, peer, supervisor):
+            for retired in ("PARALLEL_CHECK", "multiple-writer", "workflow pilot", "marker"):
+                self.assertNotIn(retired.casefold(), active.casefold())
 
 class RuntimeGenerationTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temporary = tempfile.TemporaryDirectory()
         self.root = Path(self.temporary.name)
         self.canonical = self.root / "canonical"
-        self.workflow = self.root / "room-workflow"
         self.canonical.mkdir()
-        self.workflow.mkdir()
 
         (self.canonical / "config.toml").write_text(
             '\n'.join(
@@ -836,8 +801,6 @@ class RuntimeGenerationTests(unittest.TestCase):
             (self.canonical / name).write_text("{}\n" if name.endswith(".json") else "fixture\n")
         for name in ("skills", "plugins"):
             (self.canonical / name).mkdir()
-        for name in ("WORKSPACE_PROTOCOL.md", "ANTI_PATTERNS.md", "SUPERVISOR_NOTEBOOK.md"):
-            (self.workflow / name).write_text(f"# {name}\n")
 
     def tearDown(self) -> None:
         self.temporary.cleanup()
@@ -880,10 +843,8 @@ class RuntimeGenerationTests(unittest.TestCase):
                 (runtime / "model-instructions.md").resolve(),
                 (self.canonical / "model-instructions.md").resolve(),
             )
-            self.assertEqual(
-                (runtime / "ANTI_PATTERNS.md").resolve(),
-                (self.workflow / "ANTI_PATTERNS.md").resolve(),
-            )
+            self.assertFalse((runtime / "ANTI_PATTERNS.md").exists())
+            self.assertFalse((runtime / "SUPERVISOR_NOTEBOOK.md").exists())
             self.assertFalse((runtime / "WORKSPACE_PROTOCOL.md").exists())
             catalog = json.loads((runtime / "model-catalog.no-native-agents.json").read_text())
             self.assertTrue(all(model["multi_agent_version"] is None for model in catalog["models"]))
@@ -991,21 +952,27 @@ class RuntimeGenerationTests(unittest.TestCase):
         self.assertFalse(codex_marker.exists())
         self.assertEqual(marker.read_bytes(), b"do not touch\x00")
 
-    def test_sync_removes_legacy_workspace_protocol_link(self) -> None:
+    def test_sync_runs_without_workflow_assets_and_preserves_private_files(self) -> None:
         runtime = self.root / ".runtime" / "lead"
         runtime.mkdir(parents=True)
-        (runtime / "WORKSPACE_PROTOCOL.md").symlink_to(
-            self.workflow / "WORKSPACE_PROTOCOL.md"
-        )
+        private_notebook = runtime / "SUPERVISOR_NOTEBOOK.md"
+        private_notebook.write_bytes(b"private notebook\x00")
+        private_workflow = runtime / "ANTI_PATTERNS.md"
+        private_workflow_target = self.root / "private-workflow.md"
+        private_workflow_target.write_bytes(b"private workflow\x00")
+        private_workflow.symlink_to(private_workflow_target)
 
         self.run_sync("lead")
 
-        self.assertFalse((runtime / "WORKSPACE_PROTOCOL.md").exists())
+        self.assertEqual(private_notebook.read_bytes(), b"private notebook\x00")
+        self.assertTrue(private_workflow.is_symlink())
+        self.assertEqual(private_workflow.resolve(), private_workflow_target.resolve())
+        self.assertEqual(private_workflow.read_bytes(), b"private workflow\x00")
 
-    def test_supervisor_keeps_mcp_servers_and_initializes_notebook(self) -> None:
+    def test_supervisor_keeps_mcp_servers_without_initializing_notebook(self) -> None:
         runtime = self.run_sync("supervisor")
         self.assertIn("[mcp_servers.example]", (runtime / "config.toml").read_text())
-        self.assertTrue((runtime / "SUPERVISOR_NOTEBOOK.md").is_file())
+        self.assertFalse((runtime / "SUPERVISOR_NOTEBOOK.md").exists())
 
 if __name__ == "__main__":
     unittest.main()

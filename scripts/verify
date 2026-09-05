@@ -65,7 +65,6 @@ check "Paseo config is valid JSON" jq -e . "$config_template"
 check "room sync exists" test -f "$sync_path"
 check "room launcher is executable" test -x "$launcher_path"
 check "workspace protocol exists" test -f "$workflow_root/WORKSPACE_PROTOCOL.md"
-check "workflow pilot reporter is executable" test -x "$REPO_ROOT/scripts/workflow-pilot-report"
 check "Paseo provenance manifest exists" test -f "$REPO_ROOT/paseo/source.toml"
 
 for role in supervisor lead peer; do
@@ -78,20 +77,40 @@ for obsolete_path in "${obsolete_paths[@]}"; do
   check "obsolete path is inactive: $obsolete_path" path_is_absent "$obsolete_path"
 done
 
+if [[ "$mode" == source ]]; then
+  for retired_source in \
+    "$workflow_root/ANTI_PATTERNS.md" \
+    "$workflow_root/SUPERVISOR_NOTEBOOK.md" \
+    "$REPO_ROOT/scripts/workflow-pilot-report" \
+    "$REPO_ROOT/docs/workflow-pilot.md" \
+    "$REPO_ROOT/docs/better-harness-role.md" \
+    "$REPO_ROOT/better-harness/source.toml" \
+    "$REPO_ROOT/tests/test_multiple_writers.py" \
+    "$REPO_ROOT/tests/fixtures/workflow-pilot.jsonl"; do
+    check "retired workflow source is absent: $retired_source" path_is_absent "$retired_source"
+  done
+fi
+
 rejects_legacy_evidence_role() {
   ! "$launcher_path" --resolve-evidence-home "$1" >/dev/null 2>&1
 }
 check "launcher rejects Review evidence home" rejects_legacy_evidence_role review
 check "launcher rejects Harness evidence home" rejects_legacy_evidence_role harness
 
-for marker in \
-  "FRONTIER_BRIEF v1" \
-  "FOUNDATION_CHECK v1" \
-  "PEER_DISPOSITION v1" \
-  "LEAD_RULING v1" \
-  "PLAN_RECONCILIATION v1" \
-  "PARALLEL_CHECK v1"; do
-  check "workspace protocol includes $marker" grep -Fq "$marker" "$workflow_root/WORKSPACE_PROTOCOL.md"
+check "Human authority is explicit" grep -Fq "Human owns product goals" "$workflow_root/WORKSPACE_PROTOCOL.md"
+check "Lead acceptance is explicit" grep -Fq "explicitly accepts or rejects" "$workflow_root/WORKSPACE_PROTOCOL.md"
+check "single writable Peer boundary is explicit" grep -Fq "at most one active" "$workflow_root/WORKSPACE_PROTOCOL.md"
+check "Peer challenge signals are explicit" grep -Fq "REOPEN_REQUEST" "$workflow_root/WORKSPACE_PROTOCOL.md"
+check "event-driven waiting is explicit" grep -Fq "repeatedly polling unchanged state" "$workflow_root/WORKSPACE_PROTOCOL.md"
+
+for active_contract in \
+  "$workflow_root/WORKSPACE_PROTOCOL.md" \
+  "$overlays_root/supervisor.config.toml" \
+  "$overlays_root/lead.config.toml" \
+  "$overlays_root/peer.config.toml"; do
+  for forbidden in "PARALLEL_CHECK" "multiple-writer" "OCR Review" "Better Harness" "workflow pilot"; do
+    check "active contract omits $forbidden" bash -c '! grep -Fqi -- "$1" "$2"' bash "$forbidden" "$active_contract"
+  done
 done
 
 check "exactly three derived Codex providers" jq -e '

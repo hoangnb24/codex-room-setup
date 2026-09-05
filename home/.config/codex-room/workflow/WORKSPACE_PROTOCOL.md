@@ -1,302 +1,52 @@
 # Workspace Protocol
 
-## Status
-
-- owner: Human
-- version: 2-pilot
-- applies_to: all projects operated through codex-room
-- readers: Supervisor, Lead, and Peer
-- required companion for complex/repeated failures: `ANTI_PATTERNS.md`
-
-## Precedence and local refinement
-
-Human instructions remain authoritative. A repository may refine this baseline
-in `docs/WORKSPACE_PROTOCOL.md`. The repository protocol wins for project-local
-tactics and constraints, but cannot silently change Human intent, room-role
-authority, or safety boundaries. When the two materially conflict, surface the
-conflict instead of combining them.
-
-This pilot standardizes observable handoffs before Paseo enforces workflow
-state. The formats below are coordination messages, not a second repository task
-tracker. Durable outcome, contract, dependency, decision, and acceptance state
-belongs in the active project plan or an ADR. Seat ownership, candidate state,
-and pending rulings remain runtime coordination state.
+This is the small shared contract for a Codex Room workspace. Human
+instructions and owner decisions remain authoritative. A repository may add
+project-local detail, but cannot change role authority or safety boundaries.
 
 ## Authority
 
-- Supervisor owns portfolio governance, routing, workflow observation, evidence
-  reconciliation, and authorized Lead lifecycle operations.
-- Lead owns project architecture, decomposition, integration, verification, and
-  technical acceptance.
-- Human owns product goals, portfolio priority, material cost, external effects,
-  and risk trade-offs.
-- Peer owns only the bounded outcome delegated by Lead.
+- Human owns product goals, priority, material cost, external effects, and
+  irreversible risk decisions.
+- Supervisor observes, faithfully routes Human intent, and performs bounded
+  room recovery. It is not another project Lead.
+- Lead owns project framing, technical decisions, integration, verification,
+  and explicit candidate acceptance.
+- Peer owns one bounded outcome delegated by Lead.
 
-## Task classes
+## Ownership and dispatch
 
-### Tiny / bounded
+- Give every moving write scope one owner; Lead keeps at most one active
+  writable Peer at a time.
+- A Lead brief states the observable outcome, dependencies, write scope,
+  relevant contract or invariants, acceptance evidence, and when to reopen the
+  decision. Implementation file lists remain provisional.
+- A writable Peer returns an immutable candidate or deterministic snapshot,
+  original base, complete changed paths, verification, and residual risk.
+- Preserve unrelated work and existing private notebooks, runtime/session
+  state, and operator-owned `.codex` bytes. The setup must not silently take
+  ownership of them.
 
-Lead may act directly when no judgment separation is needed, otherwise assign one
-Peer Engineer.
+## Independent judgment
 
-### Cross-module or lifecycle-sensitive
+Peer may return `REOPEN_REQUEST` for a failed premise,
+`DEPENDENCY_REQUEST` for an unowned prerequisite, or `BLOCKED` when no safe
+in-scope progress remains. Each signal includes evidence, consequence, and the
+decision or dependency needed.
 
-Use a read-only Architect only when foundation or design uncertainty can change
-the route. Use one isolated Peer writer for the moving scope. Use an independent
-read-only Reviewer only when the frozen candidate has material correctness,
-lifecycle, proof, privacy, security, or integration risk. Do not create an
-Architect or Reviewer only to complete a standard topology.
+When architecture or an exact candidate carries material uncertainty, Lead may
+request a fresh read-only Peer review of the stable candidate or snapshot. The
+review uses the flexible Peer profile and a bounded question; no dedicated
+review role, mandatory form, or reviewer count is
+required.
 
-### Architecture lock-in or owner trade-off
+## Acceptance and waiting
 
-Lead gathers sealed independent opinions, reconciles decision-changing claims,
-and escalates owner-only choices through Supervisor to Human.
+Writer proof, passing tests, completion messages, and lifecycle status are
+evidence. Lead inspects the exact artifact and explicitly accepts or rejects
+the candidate with a technical reason. Human alone decides product scope,
+material cost, external effects, and irreversible risk.
 
-## Ownership and workspaces
-
-- One writer owns one moving scope.
-- Concurrent writers require isolated worktrees.
-- Review only an exact commit or deterministic workspace snapshot.
-- Preserve unrelated and pre-existing resources.
-
-During the pilot, Lead declares writable scope as normalized repository-relative
-directory prefixes. Equal, ancestor, and descendant prefixes overlap. Worktree
-isolation does not make overlapping logical scopes independent. When practical,
-title a writable seat `[F:<frontier-id>] [W:<scope>]` so ownership is visible in
-current Paseo state.
-
-Whenever at least two writable frontiers are ready, Lead evaluates them together
-before dispatch and records:
-
-```text
-PARALLEL_CHECK v1
-frontiers:
-base_commit:
-dependency_independent: yes | no
-write_scopes:
-physical_scope_overlap: yes | no
-logical_scope_overlap: yes | no
-shared_contract_identity:
-shared_contract_digest:
-shared_contract_frozen: yes | no
-shared_mutable_surfaces: none | list
-proof_independent: yes | no
-validation_resources: ISOLATED | SERIALIZED | SHARED
-integration_order:
-decision: SERIAL | PARALLEL
-```
-
-`SERIAL` is the pilot default. Unknown or incomplete evidence means `SERIAL`,
-and no repository may have more than two concurrent writers. Read-only seats do
-not count toward that limit. `PARALLEL` requires the same exact base commit, one
-isolated worktree per writer, dependency independence, non-overlapping physical
-and logical scopes, a frozen shared contract identity and digest, independent
-proof, isolated or serialized validation resources, and a deterministic
-integration order. It also requires no shared schema, migration, generated
-registry, lockfile, composition root, or lifecycle owner; list any other shared
-mutable surface and choose `SERIAL`.
-
-This is a positive opportunity gate: the presence of two ready frontiers does
-not imply parallelism, and absent proof does not permit it. The check and seat
-metadata are runtime coordination state, not a durable ownership ledger or a
-claim that Paseo atomically enforces ownership.
-
-## Planning contract
-
-The active plan fixes only decision-relevant contracts: observable outcome,
-API or boundary behavior, validation, persistence and lifecycle, failure and
-retry semantics, invariants, dependencies, and acceptance evidence. Proposed
-files, classes, helpers, and implementation sequence remain provisional unless
-an inspected constraint makes them contractual.
-
-For consequential delegated work, Lead sends:
-
-```text
-FRONTIER_BRIEF v1
-frontier_id:
-plan_ref:
-outcome:
-depends_on:
-write_scope:
-stable_contract_refs:
-invariants:
-acceptance:
-reopen_when:
-candidate_required: commit | deterministic-snapshot | none
-```
-
-Omit fields that truly do not apply, but do not replace them with speculative
-implementation detail. Tiny bounded work may use a concise natural-language
-brief when the same boundaries are unambiguous.
-
-## Foundation gate
-
-Before dispatching a consequential feature involving cross-module state,
-lifecycle, persistence, retry, or a shared contract, Lead records:
-
-```text
-FOUNDATION_CHECK v1
-state_owner:
-lifecycle:
-cross_boundary_invariants:
-required_mechanisms:
-dependency_direction:
-status: STABLE | DISCOVERY_REQUIRED | FOUNDATION_REQUIRED
-evidence:
-```
-
-- `STABLE`: dispatch may proceed.
-- `DISCOVERY_REQUIRED`: route bounded read-only investigation first.
-- `FOUNDATION_REQUIRED`: assign one foundation writer and hold dependent feature
-  work until Lead accepts a stable candidate.
-
-Do not require this ceremony for trivial work with no credible foundation
-uncertainty.
-
-## Routing and escalation
-
-- Peer returns `REOPEN_REQUEST` when evidence invalidates a technical premise.
-- Peer returns `DEPENDENCY_REQUEST` for unowned prerequisites.
-- Peer returns `BLOCKED` when no safe in-scope progress remains.
-- Lead decides technical route and candidate verdict.
-- Supervisor challenges workflow with evidence, not direct Peer correction.
-- Human decides scope, cost, external action, and portfolio trade-offs.
-
-Peer returns a decision-ready disposition:
-
-```text
-PEER_DISPOSITION v1
-frontier_id:
-status: CANDIDATE | REOPEN_REQUEST | DEPENDENCY_REQUEST | BLOCKED
-candidate_identity:
-original_base:
-changed_paths:
-stable_contract_digest:
-observed_evidence:
-premise_invalidated:
-consequence:
-decision_needed:
-verification:
-residual_risk:
-```
-
-For a writable candidate, `candidate_identity` is an immutable commit and the
-Peer reports its original base, complete changed-path manifest, unchanged frozen
-contract digest, and personally observed verification. A changed digest is
-contract drift, not a candidate handoff under the original parallel check.
-
-Lead integrates parallel candidates one at a time in the recorded order onto
-the current accepted integration tip. Before each integration, verify candidate
-ancestry, the changed-path manifest against the declared physical and logical
-scope, and the frozen contract identity and digest. Then run focused proof and a
-thin composed acceptance check on the new tip. A merge conflict, unexpected
-path, contract drift, dependency drift, or invalidated integration order ends
-the parallel premise; stop and re-brief affected work instead of improvising a
-compatibility layer or transition mechanism.
-
-Lead responds to every non-candidate disposition, and to consequential candidate
-acceptance, with a concrete ruling:
-
-```text
-LEAD_RULING v1
-frontier_id:
-decision: ACCEPT | CONTINUE | REVISE_PLAN | CREATE_DEPENDENCY | SPLIT | CANCEL
-evidence_considered:
-reason:
-plan_changed: yes | no
-new_plan_ref_or_digest:
-next_frontier:
-```
-
-When the plan changes, Lead re-briefs affected work. Do not let downstream work
-silently continue against a contract known to be stale.
-
-Suspected anti-patterns use the finding packet, reaction states, reconciliation
-states, and convergence guard in `ANTI_PATTERNS.md`. A finding is never a hidden
-correction order.
-
-## Verification
-
-Engineer proves the write, Reviewer attempts to falsify the exact candidate, Lead
-inspects the artifact and evidence, and Human accepts only owner-level trade-offs.
-
-### Review classes and close-out
-
-Before creating a Reviewer, Lead selects the smallest sufficient review class:
-
-- `NO_REVIEW`: tiny or low-risk work that Lead can inspect directly.
-- `FAST`: bounded correction close-out on one accepted finding set and its direct
-  regression surface. Prefer Sol Medium.
-- `DEEP`: one exploratory adversarial review of a consequential frozen candidate.
-  Prefer Luna Max.
-- `DUAL`: two concurrent reviews only when their lanes are distinct and
-  dependency-independent. Provider or reviewer count creates no authority.
-
-Lead also declares `review_mode: EXPLORATORY | CLOSEOUT`, one review lane, and
-the candidate identity. In `EXPLORATORY` mode, Reviewer inspects the complete
-assigned concern and returns one batch of material findings. Lead rules once on
-that batch and freezes the accepted finding set before correction.
-
-Every `CLOSEOUT` dispatch uses `review_class: FAST`, including when Lead reuses
-the original Reviewer seat. The class describes the bounded work, not the
-runtime that happens to execute it. Record `review_model_actual` separately so
-pilot measurement can distinguish scope from model choice.
-
-One writer then owns one correction batch. In `CLOSEOUT` mode, Reviewer checks
-only the accepted finding set, the correction delta, and direct regressions from
-that delta. Close-out does not restart broad exploratory review. A new finding
-may reopen the work only when it is a material direct regression or evidence of
-one shared foundation failure.
-
-A close-out Reviewer reports exactly `CLOSEOUT_CLEAR` or `CLOSEOUT_FINDINGS`.
-Do not create synonyms such as `CLOSEOUT_NO_FINDINGS`. These are evidence for
-Lead, not acceptance rulings.
-
-The normal review family ends after one exploratory review, one correction
-batch, and one close-out. If close-out would require a second correction in the
-same finding family, reconciliation is required before another dispatch. Freeze
-the candidate and correction history, identify the shared mechanism or failed
-premise, and let Lead decide redesign, bounded correction, no action, or owner
-escalation. Do not start a third review loop automatically.
-
-## Reconciliation cadence
-
-Lead tracks accepted consequential frontiers since the last reconciliation.
-After the third acceptance, reconciliation is due. Before dispatch beyond the
-fourth, it is required. Reconcile earlier after a reopen, a newly discovered
-dependency, or evidence of wrapper, fallback, compatibility, or duplicate-state
-work used to preserve a failed premise.
-
-```text
-PLAN_RECONCILIATION v1
-plan_ref:
-accepted_since_last:
-code_changed_assumptions:
-absorbed_or_obsolete_frontiers:
-dependency_changes:
-foundation_changes:
-parallel_frontier:
-next_frontier:
-plan_updated: yes | no
-```
-
-Reconciliation is a decision checkpoint, not a meeting quota. If no observed
-evidence changes the plan, record that compactly and continue. Only Lead updates
-the project plan and resets the count.
-
-## Pilot observation
-
-Supervisor may evaluate tagged pilot work without taking over project authority.
-Record aggregate marker counts, candidate churn, correction rounds, scope
-collisions, stale reviews, accepted reopen requests, outcome evidence, duration,
-and token/tool usage. During an evaluation run, avoid coaching that would change
-the condition except for material ownership, safety, or Human-intent risk.
-
-Raw rollout JSONL may contain private source and prompts. Keep it local. Export
-only sanitized aggregate reports unless Human explicitly authorizes otherwise.
-
-## Protocol evolution
-
-Supervisor records comparable episodes first. Prefer the smallest reversible
-instruction or protocol experiment. Propose a Paseo product mechanism only after
-at least two comparable episodes show the same missing mechanism.
+Use finish, error, attention, and decision events to advance work. Wait for an
+event instead of repeatedly polling unchanged state. Keep handoffs concise and
+decision-ready; add detail only when it changes the route or acceptance.

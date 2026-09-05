@@ -34,7 +34,7 @@ export_one "$HOME/.config/codex-room/model-instructions.md" "$REPO_ROOT/home/.co
 for role in supervisor lead peer; do
   export_one "$HOME/.config/codex-room/overlays/$role.config.toml" "$REPO_ROOT/home/.config/codex-room/overlays/$role.config.toml"
 done
-for name in WORKSPACE_PROTOCOL.md ANTI_PATTERNS.md SUPERVISOR_NOTEBOOK.md; do
+for name in WORKSPACE_PROTOCOL.md; do
   export_one "$HOME/.config/codex-room/workflow/$name" "$REPO_ROOT/home/.config/codex-room/workflow/$name"
 done
 for name in codex-room codex-room-sync paseo-local-update; do

@@ -50,8 +50,8 @@ cd codex-room-setup
 
 `scripts/bootstrap` normalizes the Paseo checkout to `origin = hoangnb24 fork`
 and `upstream = public repo`, then installs Paseo's npm dependencies and the
-three retained role runtimes. It does not require OCR or Better Harness, install
-or authenticate Codex, or build Paseo Desktop. The lower-level `install`,
+three role runtimes. It does not install or authenticate Codex or build Paseo
+Desktop. The lower-level `install`,
 `install-paseo-fork`, `sync-all`, and `verify` commands remain available for
 targeted maintenance.
 
@@ -114,8 +114,8 @@ restarts Paseo.
 | Supervisor | `gpt-5.6-sol` | medium | yes |
 | Lead | `gpt-5.6-sol` | medium | yes |
 | Peer | `gpt-5.6-sol` | medium | no |
-Lead sends premise, architecture, candidate, and macro review to a read-only
-Peer. All role overlays currently request `danger-full-access` with
+Lead may request a fresh read-only Peer review when independent judgment can
+change a technical decision. All role overlays currently request `danger-full-access` with
 `approval_policy = "never"`. Read
 [docs/architecture.md](docs/architecture.md) before changing these boundaries.
 
@@ -137,23 +137,11 @@ Peer. All role overlays currently request `danger-full-access` with
 # Summarize one Codex rollout session for benchmarking
 ./scripts/session-usage --role peer --session-id SESSION_ID
 
-# Count workflow-pilot markers without exporting rollout content
-./scripts/workflow-pilot-report --format json /path/to/rollout.jsonl
 ```
 
 See [docs/session-usage-benchmark.md](docs/session-usage-benchmark.md) for token,
 request, tool-call, timing, and API-equivalent cost definitions.
-See [docs/workflow-pilot.md](docs/workflow-pilot.md) for the setup-only workflow
-experiment and the evidence threshold for adding Paseo enforcement.
-
-The workflow pilot also supports a guarded multiple-writer operation. Whenever
-at least two writable frontiers are ready, Lead runs a positive concurrency
-gate; the safe default remains `SERIAL`, and at most two writers may run at once
-in a repository. Admission requires separate worktrees at one exact base,
-independent physical and logical scopes, a frozen contract, and commit-only
-handoffs. Lead integrates the commits serially and verifies the composed result.
-See [docs/workflow-pilot.md](docs/workflow-pilot.md#guarded-multiple-writer-pilot)
-for the contract and [docs/operations.md](docs/operations.md#run-the-guarded-multiple-writer-pilot)
-for the runbook.
+See [docs/operations.md](docs/operations.md) for the single-writer handoff,
+candidate acceptance, and maintenance runbooks.
 
 Official Codex configuration precedence is documented by OpenAI in the [Codex config basics](https://learn.chatgpt.com/docs/config-file/config-basic.md). `codex-room` uses a separate `CODEX_HOME` per role; this is a local orchestration layer, not a replacement for the operator's Codex installation.

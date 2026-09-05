@@ -68,20 +68,6 @@ install_one() {
   log "INSTALLED  ~/$relative_target"
 }
 
-install_once() {
-  local relative_source="$1"
-  local relative_target="$2"
-  local mode="$3"
-  local target_path="$HOME/$relative_target"
-
-  if [[ -e "$target_path" || -L "$target_path" ]]; then
-    log "PRESERVED  ~/$relative_target"
-    return
-  fi
-
-  install_one "$relative_source" "$relative_target" "$mode"
-}
-
 retire_obsolete() {
   local relative_target="$1"
   local target_path="$HOME/$relative_target"
@@ -107,20 +93,15 @@ done <<'EOF'
 .config/codex-room/overlays/lead.config.toml|.config/codex-room/overlays/lead.config.toml|600
 .config/codex-room/overlays/peer.config.toml|.config/codex-room/overlays/peer.config.toml|600
 .config/codex-room/workflow/WORKSPACE_PROTOCOL.md|.config/codex-room/workflow/WORKSPACE_PROTOCOL.md|644
-.config/codex-room/workflow/ANTI_PATTERNS.md|.config/codex-room/workflow/ANTI_PATTERNS.md|644
 .local/bin/codex-room|.local/bin/codex-room|755
 .local/bin/codex-room-sync|.local/bin/codex-room-sync|755
 .local/bin/paseo-local-update|.local/bin/paseo-local-update|755
 .paseo/config.json.template|.paseo/config.json|600
 EOF
 
-install_once \
-  ".config/codex-room/workflow/SUPERVISOR_NOTEBOOK.md" \
-  ".config/codex-room/workflow/SUPERVISOR_NOTEBOOK.md" \
-  644
-
-# These former entrypoints and inputs would keep Review/Harness addressable
-# after an upgrade. Back them up and retire them without touching role runtimes.
+# These retired entrypoints would keep removed roles addressable after an
+# upgrade. Back them up and retire them without touching role runtimes or
+# private workflow files.
 for obsolete in \
   .config/codex-room/overlays/review.config.toml \
   .config/codex-room/overlays/harness.config.toml \

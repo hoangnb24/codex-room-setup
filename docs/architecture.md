@@ -23,7 +23,7 @@
 | Layer | Owner | Mutable state |
 | --- | --- | --- |
 | `~/.codex` | Operator/Codex | Auth, global config, skills, plugins, sessions |
-| `~/.config/codex-room` | This repository | Role overlays and retained workflow references |
+| `~/.config/codex-room` | This repository | Role overlays and the workspace protocol reference |
 | `~/.codex-runtime` | `codex-room-sync` | Generated configs plus role-local sessions and databases |
 | `~/.paseo` | Paseo | Provider config, agents, projects, worktrees, logs and identity |
 | Paseo fork checkout | Git | Source code for CLI, daemon and Desktop |
@@ -37,11 +37,11 @@ For a role, the sync script:
 3. Adds role-specific `developer_instructions`.
 4. Generates a model catalog with native multi-agent metadata removed.
 5. Forces `[agents].enabled = false` and all native multi-agent feature flags off.
-6. Symlinks shared Codex resources and the anti-pattern catalog.
+6. Symlinks shared Codex resources and the common model instructions.
 
 Supervisor, Lead, and Peer retain a canonical
-`plugins -> ~/.codex/plugins` symlink. Review and Harness directories from older
-installations are not generated, inspected, migrated, or removed.
+`plugins -> ~/.codex/plugins` symlink. Existing additional runtime directories
+and private workflow files are not generated, inspected, migrated, or removed.
 The launcher resolves evidence homes read-only with
 `codex-room --resolve-evidence-home <role>` and does not sync on that route.
 

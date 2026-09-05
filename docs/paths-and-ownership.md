@@ -5,7 +5,7 @@
 ```text
 ~/.config/codex-room/model-instructions.md
 ~/.config/codex-room/overlays/*.config.toml
-~/.config/codex-room/workflow/*.md
+~/.config/codex-room/workflow/WORKSPACE_PROTOCOL.md
 ~/.local/bin/codex-room
 ~/.local/bin/codex-room-sync
 ~/.local/bin/paseo -> ~/projects/supervisors/paseo/packages/cli/bin/paseo

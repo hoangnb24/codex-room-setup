@@ -8,11 +8,11 @@ The word “profile” appears at three different levels:
 
 Changing a Paseo provider model affects the model picker and Paseo default. Changing an overlay affects the Codex process default after the next sync. Keep both aligned deliberately.
 
-The Peer overlay owns bounded implementation, investigation, architecture,
-solution-shape, audit, and read-only review work. Peer has no Paseo MCP
-injection and its role instructions forbid coordinating other seats.
+The Peer overlay owns one bounded implementation, investigation, architecture,
+or read-only candidate review outcome. Peer has no Paseo MCP injection and its
+role instructions forbid coordinating other seats.
 
 The sync allowlist is intentionally small. New top-level role-specific keys must be added to `OVERRIDE_KEYS` in `codex-room-sync` and covered by tests.
 
-Review and Harness overlays from older installations are retired during install
-and are not accepted by the launcher or generator.
+Retired role entrypoints are backed up and removed during install. Existing
+runtime directories and private operator files remain untouched.

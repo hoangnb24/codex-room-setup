@@ -12,5 +12,6 @@ Expected top-level roles:
 
 Use `scripts/export-runtime-snapshots` for sanitized local summaries. Snapshot directories are ignored by default.
 
-Legacy Review/Harness directories may remain from an older installation. The
-three-role generator does not inspect, mutate, delete, export, or launch them.
+Additional role directories or private files may remain from an older
+installation. The three-role generator does not inspect, mutate, delete,
+export, or launch them.
