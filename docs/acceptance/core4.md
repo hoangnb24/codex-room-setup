@@ -124,6 +124,23 @@ operator's existing home without creating `hooks.json`. The full-suite result
 and correction commit are recorded on PR #8. The container evidence above
 belongs to the original implementation; it was not rerun for this correction.
 
+## Installation feedback: native-agent v2 table
+
+The operator deliberately enabled native agents in the personal Codex home;
+the Room contract still requires all three role runtimes to disable them.
+The generator previously added a v2 boolean alongside the operator's v2 table,
+producing invalid TOML. It now preserves the table and sets its `enabled` field
+to `false`, or emits boolean `false` for scalar configurations. Verification
+recognizes both disabled forms and exposes parser errors instead of hiding them
+behind the generic policy failure.
+
+Focused tests parse all three generated runtimes through repeated public apply,
+prove the operator config remains unchanged, and check verification of disabled,
+enabled and malformed v2 settings. Generation from the reporting operator's
+actual base in a disposable stage also produced three valid disabled configs
+without changing the base. Correction hashes and full-suite results are tracked
+on PR #8; the original container evidence was not rerun for this correction.
+
 ## Consolidated Human runbook
 
 Before merge, select the candidate branch explicitly: README's default clone

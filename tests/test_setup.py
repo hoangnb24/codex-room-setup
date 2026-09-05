@@ -528,6 +528,24 @@ class SetupShapeTests(unittest.TestCase):
             self.assertIn("FAIL  lead native-agent policy disabled", wrong_table.stdout)
             lead_config.write_text(valid_config)
 
+            table_config = (
+                "[agents]\nenabled = false\n[features]\nmulti_agent = false\n"
+                "[features.multi_agent_v2]\nenabled = false\nmax_concurrent_threads_per_session = 12\n"
+            )
+            lead_config.write_text(table_config)
+            table_ok = subprocess.run([str(ROOT / "scripts/verify")], env=env, capture_output=True, text=True)
+            self.assertEqual(table_ok.returncode, 0, table_ok.stdout + table_ok.stderr)
+            lead_config.write_text(table_config.replace("[features.multi_agent_v2]\nenabled = false", "[features.multi_agent_v2]\nenabled = true"))
+            table_on = subprocess.run([str(ROOT / "scripts/verify")], env=env, capture_output=True, text=True)
+            self.assertNotEqual(table_on.returncode, 0)
+            self.assertIn("must be disabled", table_on.stderr)
+            lead_config.write_text(valid_config + "\n[features.multi_agent_v2]\nenabled = true\n")
+            malformed = subprocess.run([str(ROOT / "scripts/verify")], env=env, capture_output=True, text=True)
+            self.assertNotEqual(malformed.returncode, 0)
+            self.assertIn("cannot read runtime TOML", malformed.stderr)
+            self.assertIn("Cannot overwrite a value", malformed.stderr)
+            lead_config.write_text(valid_config)
+
             lead_catalog = runtime / "lead/model-catalog.no-native-agents.json"
             valid_catalog = lead_catalog.read_text()
             lead_catalog.write_text('{"models":[]}\n')
@@ -874,6 +892,30 @@ class PublicInstallTransactionTests(unittest.TestCase):
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("dangling link", result.stderr)
             self.assertEqual(self.tree_snapshot(self.home), before)
+
+    def test_public_install_disables_table_native_agents_without_changing_operator(self) -> None:
+        base = self.home / ".codex/config.toml"
+        base.write_text(base.read_text().replace("multi_agent_v2 = true\n", "") +
+                        "\n[features.multi_agent_v2] # operator settings\n"
+                        "enabled = true\nmax_concurrent_threads_per_session = 12\n")
+        original = self.tree_snapshot(self.home / ".codex")
+        env = self.lifecycle_env(self.make_fake_paseo(), self.make_fake_verifier())
+        for _ in range(2):
+            result = self.run_install(("--apply",), env)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            for role in ("supervisor", "lead", "peer"):
+                config = self.home / ".codex-runtime" / role / "config.toml"
+                parsed = subprocess.run(
+                    [env["CODEX_ROOM_TOML_PYTHON"], "-c",
+                     "import sys,tomllib; c=tomllib.load(open(sys.argv[1],'rb')); "
+                     "assert c['agents']['enabled'] is False; "
+                     "assert c['features']['multi_agent'] is False; "
+                     "assert c['features']['multi_agent_v2']['enabled'] is False; "
+                     "assert c['features']['multi_agent_v2']['max_concurrent_threads_per_session']==12",
+                     str(config)], capture_output=True, text=True,
+                )
+                self.assertEqual(parsed.returncode, 0, parsed.stdout + parsed.stderr)
+        self.assertEqual(self.tree_snapshot(self.home / ".codex"), original)
 
     def test_redirected_active_runtime_role_fails_before_publication(self) -> None:
         redirected = self.root / "redirected-lead"

@@ -96,8 +96,12 @@ def apply_scalar_overrides(base_head: str, values: dict[str, str]) -> str:
     return "\n".join(rendered).rstrip() + "\n\n"
 
 
+def table_header_pattern(table: str) -> str:
+    return rf"(?m)^\[{re.escape(table)}\][ \t]*(?:#[^\n]*)?$"
+
+
 def set_table_scalar(text: str, table: str, key: str, value: str) -> str:
-    table_header = rf"(?m)^\[{re.escape(table)}\]\s*$"
+    table_header = table_header_pattern(table)
     match = re.search(table_header, text)
     if not match:
         return text.rstrip() + f"\n\n[{table}]\n{key} = {value}\n"
@@ -213,7 +217,13 @@ def main() -> None:
     merged = head + (instructions + "\n" if instructions else "") + tail.lstrip()
     merged = set_table_scalar(merged, "agents", "enabled", "false")
     merged = set_table_scalar(merged, "features", "multi_agent", "false")
-    merged = set_table_scalar(merged, "features", "multi_agent_v2", "false")
+    # Newer operator configs can represent v2 as a table. Preserve that
+    # representation and disable its enabled field, instead of introducing a
+    # conflicting boolean at the same TOML key.
+    if re.search(table_header_pattern("features.multi_agent_v2"), merged):
+        merged = set_table_scalar(merged, "features.multi_agent_v2", "enabled", "false")
+    else:
+        merged = set_table_scalar(merged, "features", "multi_agent_v2", "false")
 
     runtime_root.mkdir(parents=True, exist_ok=True)
     runtime_root.chmod(0o700)

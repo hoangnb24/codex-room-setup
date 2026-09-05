@@ -14,6 +14,13 @@ agents. Paseo therefore owns exactly the supervisor/lead/peer topology. The
 generator never prunes sibling directories or private files, so existing
 operator state remains outside the active lifecycle.
 
+The operator may keep native agents enabled in `~/.codex/config.toml`. Each
+Room runtime overrides `agents.enabled` and `features.multi_agent` to `false`.
+For v2, a boolean becomes `false`; an existing `[features.multi_agent_v2]`
+table keeps its settings but gets `enabled = false`. The verifier accepts both
+disabled representations and reports TOML parse errors separately from enabled
+policy flags. The operator config is never rewritten.
+
 `WORKSPACE_PROTOCOL.md` is an installed reference under
 `~/.config/codex-room/workflow/`; it is not copied into each generated
 runtime. The generated role instructions carry the authority boundary, while

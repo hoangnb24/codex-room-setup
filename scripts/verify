@@ -200,16 +200,24 @@ if [[ "$mode" == installed ]]; then
     "$toml_python" - "$1" <<'PY'
 import pathlib
 import sys
-import tomllib
+try:
+    import tomllib
+except ImportError:
+    raise SystemExit("ERROR: runtime verification requires a Python interpreter with tomllib (3.11+)")
 
-with pathlib.Path(sys.argv[1]).open("rb") as stream:
-    config = tomllib.load(stream)
+try:
+    with pathlib.Path(sys.argv[1]).open("rb") as stream:
+        config = tomllib.load(stream)
+except (OSError, tomllib.TOMLDecodeError) as error:
+    raise SystemExit(f"ERROR: cannot read runtime TOML {sys.argv[1]}: {error}")
 
 if config.get("agents", {}).get("enabled") is not False:
-    raise SystemExit(1)
+    raise SystemExit("ERROR: agents.enabled must be false in the Room runtime")
 features = config.get("features", {})
-if features.get("multi_agent") is not False or features.get("multi_agent_v2") is not False:
-    raise SystemExit(1)
+v2 = features.get("multi_agent_v2")
+v2_disabled = v2 is False or (isinstance(v2, dict) and v2.get("enabled") is False)
+if features.get("multi_agent") is not False or not v2_disabled:
+    raise SystemExit("ERROR: features.multi_agent and multi_agent_v2 must be disabled in the Room runtime")
 PY
   }
   paseo_checkout="${PASEO_REPO_DIR:-$HOME/projects/supervisors/paseo}"
@@ -238,7 +246,13 @@ PY
         "$runtime/model-catalog.no-native-agents.json"
     fi
     if [[ -f "$runtime/config.toml" ]]; then
-      check "$role native-agent policy disabled" runtime_policy_disabled "$runtime/config.toml"
+      if policy_result=$(runtime_policy_disabled "$runtime/config.toml" 2>&1); then
+        log "OK    $role native-agent policy disabled"
+      else
+        log "FAIL  $role native-agent policy disabled"
+        printf '%s\n' "$policy_result" >&2
+        failures=$((failures + 1))
+      fi
     fi
     check "$role plugins use canonical symlink" test \
       "$(readlink "$runtime/plugins" 2>/dev/null || true)" = "$HOME/.codex/plugins"
