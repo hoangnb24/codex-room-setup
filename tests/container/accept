@@ -97,9 +97,11 @@ export npm_config_update_notifier=false
 export ELECTRON_SKIP_BINARY_DOWNLOAD=1
 export PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
 
+"$source_root/install"
+
 for pass in fresh repeated; do
-  "$source_root/scripts/bootstrap" --apply
-  printf 'BOOTSTRAP_PASS %s\n' "$pass"
+  "$source_root/install" --apply
+  printf 'PUBLIC_INSTALL_PASS %s\n' "$pass"
 done
 
 after_hashes=$(sha256sum "${preserved_markers[@]}")

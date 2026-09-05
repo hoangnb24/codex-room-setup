@@ -1,0 +1,880 @@
+#!/usr/bin/env python3
+"""Transactional public lifecycle for the three-role Codex Room.
+
+The repository's older scripts remain useful as focused maintenance commands.
+This command owns the complete install boundary: it prepares every generated
+output in disposable state, publishes only managed paths, and restores those
+paths if a later step fails.
+"""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import os
+from pathlib import Path
+import shutil
+import stat
+import subprocess
+import sys
+import tempfile
+import time
+from typing import Iterable, Optional
+
+
+ROOT = Path(__file__).resolve().parents[1]
+HOME_MIRROR = ROOT / "home"
+SYNC_SOURCE = HOME_MIRROR / ".local" / "bin" / "codex-room-sync"
+VERIFY_SOURCE = ROOT / "scripts" / "verify"
+PASEO_SOURCE = ROOT / "scripts" / "install-paseo-fork"
+
+ROLES = ("supervisor", "lead", "peer")
+
+# These are the artifacts that were managed by the five-role setup.  A path is
+# retired only when its bytes match a known repository version.  A customized
+# file, a private notebook, or any redirecting link is retained and called out
+# in the plan/result.
+OBSOLETE_HASHES = {
+    ".config/codex-room/overlays/review.config.toml": {
+        "bd6658ce6fbd53a6904e41752f31493fea77ae76b974cde881dc254b89aa9e94",
+    },
+    ".config/codex-room/overlays/harness.config.toml": {
+        "f963efcd545237153ac33382c12930df97afc50b08712751f442e80c6f502889",
+    },
+    ".config/codex-room/paseo.phase2-coexist.candidate.json": {
+        "49f584972e095ddf2a99a56d58a2067d770d0fdcd6740aeaaacc6b9c7660b04",
+    },
+    ".config/codex-room/paseo.phase2-hard-cut.candidate.json": {
+        "2d164142a1cd902ebab53a416259fb290b462a176c066757f7ca346fe7f5c9ff",
+    },
+    ".local/bin/codex-room-hard-cut": {
+        "86efcfd46a25940353c889a938a8b901e9cd04e499a93287f7bda0696dbf041a",
+    },
+    ".local/bin/codex-review-apply": {
+        "df86d65034f2be7441cabf71319f1b6d9bf1e92c8a6bba72dbb46bc4e99d6262",
+    },
+    ".config/codex-room/workflow/ANTI_PATTERNS.md": {
+        "b25baaf4f632a41fb1761bc8ac7b14258b7afd011a27d2c71833d9b027109972",
+    },
+    ".config/codex-room/workflow/SUPERVISOR_NOTEBOOK.md": {
+        "d644212642909ba20c4960503f89ef74b4897e39cf4096f5c9c1df2c686d430f",
+    },
+}
+OBSOLETE_MODES = {
+    ".config/codex-room/overlays/review.config.toml": 0o600,
+    ".config/codex-room/overlays/harness.config.toml": 0o600,
+    ".config/codex-room/paseo.phase2-coexist.candidate.json": 0o600,
+    ".config/codex-room/paseo.phase2-hard-cut.candidate.json": 0o600,
+    ".local/bin/codex-room-hard-cut": 0o700,
+    ".local/bin/codex-review-apply": 0o700,
+    ".config/codex-room/workflow/ANTI_PATTERNS.md": 0o644,
+    ".config/codex-room/workflow/SUPERVISOR_NOTEBOOK.md": 0o644,
+}
+
+MANAGED_FILES = (
+    (".config/codex-room/model-instructions.md", ".config/codex-room/model-instructions.md", 0o644),
+    (".config/codex-room/overlays/supervisor.config.toml", ".config/codex-room/overlays/supervisor.config.toml", 0o600),
+    (".config/codex-room/overlays/lead.config.toml", ".config/codex-room/overlays/lead.config.toml", 0o600),
+    (".config/codex-room/overlays/peer.config.toml", ".config/codex-room/overlays/peer.config.toml", 0o600),
+    (".config/codex-room/workflow/WORKSPACE_PROTOCOL.md", ".config/codex-room/workflow/WORKSPACE_PROTOCOL.md", 0o644),
+    (".local/bin/codex-room", ".local/bin/codex-room", 0o755),
+    (".local/bin/codex-room-sync", ".local/bin/codex-room-sync", 0o755),
+    (".local/bin/paseo-local-update", ".local/bin/paseo-local-update", 0o755),
+    (".paseo/config.json.template", ".paseo/config.json", 0o600),
+)
+
+ROLE_SHARED = ("auth.json", "AGENTS.md", "hooks.json", "skills", "plugins")
+ROOM_SHARED = ("model-instructions.md",)
+
+
+class InstallError(RuntimeError):
+    """A fail-closed preflight or transaction error."""
+
+
+def out(message: str) -> None:
+    print(message)
+
+
+def warn(message: str) -> None:
+    print(f"WARNING: {message}", file=sys.stderr)
+
+
+def fail(message: str) -> "None":
+    raise InstallError(message)
+
+
+def remove_entry(path: Path) -> None:
+    """Remove one entry without following a symlink."""
+    if path.is_symlink() or path.is_file():
+        path.unlink()
+    elif path.is_dir():
+        shutil.rmtree(path)
+    elif path.exists():
+        path.unlink()
+
+
+def lstat_mode(path: Path) -> int:
+    return stat.S_IMODE(path.lstat().st_mode)
+
+
+def sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def same_file(path: Path, staged: Path, mode: int) -> bool:
+    return (
+        path.is_file()
+        and not path.is_symlink()
+        and path.read_bytes() == staged.read_bytes()
+        and lstat_mode(path) == mode
+    )
+
+
+def same_link(path: Path, target: Path) -> bool:
+    return path.is_symlink() and os.readlink(path) == str(target)
+
+
+def copy_entry(source: Path, destination: Path) -> None:
+    """Copy one file/link/tree while retaining links and private bytes."""
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    if source.is_symlink():
+        destination.symlink_to(os.readlink(source), target_is_directory=source.resolve().is_dir())
+    elif source.is_dir():
+        shutil.copytree(source, destination, symlinks=True, copy_function=shutil.copy2)
+    elif source.is_file():
+        shutil.copy2(source, destination)
+    else:
+        fail(f"unsupported filesystem entry: {source}")
+
+
+def restrict_tree(root: Path) -> None:
+    """Make transaction backups owner-only, including nested private state."""
+    if not root.exists() and not root.is_symlink():
+        return
+    if root.is_symlink() or root.is_file():
+        if not root.is_symlink():
+            root.chmod(0o600)
+        return
+    for path in sorted(root.rglob("*"), key=lambda item: len(item.parts), reverse=True):
+        if path.is_symlink():
+            continue
+        try:
+            path.chmod(0o700 if path.is_dir() else 0o600)
+        except FileNotFoundError:
+            pass
+    root.chmod(0o700)
+
+
+def make_backup_copy(source: Path, backup_root: Path, label: str) -> Path:
+    destination = backup_root / label
+    copy_entry(source, destination)
+    restrict_tree(destination)
+    return destination
+
+
+def tree_modes(root: Path) -> dict[str, int]:
+    result = {"": lstat_mode(root)}
+    if root.is_dir() and not root.is_symlink():
+        for path in root.rglob("*"):
+            result[str(path.relative_to(root))] = lstat_mode(path)
+    return result
+
+
+def restore_tree_modes(root: Path, modes: dict[str, int]) -> None:
+    for relative, mode in sorted(modes.items(), key=lambda item: len(Path(item[0]).parts)):
+        path = root if not relative else root / relative
+        if path.exists() and not path.is_symlink():
+            path.chmod(mode)
+
+
+def mkdir_parents(path: Path, created: list[Path]) -> None:
+    missing: list[Path] = []
+    candidate = path
+    while not candidate.exists() and not candidate.is_symlink():
+        missing.append(candidate)
+        candidate = candidate.parent
+    if candidate.is_symlink() or (candidate.exists() and not candidate.is_dir()):
+        fail(f"managed parent is not a directory: {candidate}")
+    for directory in reversed(missing):
+        directory.mkdir(mode=0o700)
+        created.append(directory)
+
+
+def parse_manifest() -> dict[str, str]:
+    values: dict[str, str] = {}
+    section = ""
+    for line in (ROOT / "paseo" / "source.toml").read_text().splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        if stripped.startswith("[") and stripped.endswith("]"):
+            section = stripped[1:-1]
+            continue
+        if "=" not in stripped:
+            continue
+        key, value = (part.strip() for part in stripped.split("=", 1))
+        if len(value) >= 2 and value[0] == value[-1] == '"':
+            values[f"{section}.{key}"] = value[1:-1]
+    required = (
+        "repository.fork",
+        "repository.upstream",
+        "repository.branch",
+        "repository.verified_commit",
+        "install.target",
+        "install.cli_entrypoint",
+    )
+    for key in required:
+        if not values.get(key):
+            fail(f"Paseo manifest is missing {key}")
+    if len(values["repository.verified_commit"]) != 40 or any(
+        character not in "0123456789abcdef" for character in values["repository.verified_commit"]
+    ):
+        fail("Paseo manifest verified_commit is not a lowercase 40-character SHA")
+    return values
+
+
+def configured_paths(home: Path, manifest: dict[str, str]) -> dict[str, Path | str]:
+    target_value = os.environ.get("PASEO_REPO_DIR")
+    target = Path(target_value).expanduser() if target_value else home / manifest["install.target"].lstrip("~/")
+    cli_link = Path(os.environ.get("PASEO_CLI_LINK", str(home / ".local/bin/paseo"))).expanduser()
+    manifest_commit = manifest["repository.verified_commit"]
+    configured_commit = os.environ.get("PASEO_VERIFIED_COMMIT")
+    if configured_commit is not None and configured_commit != manifest_commit:
+        fail("refusing to override the immutable Paseo commit from paseo/source.toml")
+    commit = manifest_commit
+    return {
+        "paseo_target": target,
+        "paseo_cli": cli_link,
+        "fork": os.environ.get("PASEO_FORK_URL", manifest["repository.fork"]),
+        "upstream": os.environ.get("PASEO_UPSTREAM_URL", manifest["repository.upstream"]),
+        "branch": os.environ.get("PASEO_BRANCH", manifest["repository.branch"]),
+        "commit": commit,
+        "cli_entrypoint": os.environ.get("PASEO_CLI_ENTRYPOINT", manifest["install.cli_entrypoint"]),
+    }
+
+
+def command_path(command: str) -> Optional[str]:
+    candidate = Path(command).expanduser()
+    if candidate.is_absolute() or "/" in command:
+        return str(candidate) if candidate.is_file() and os.access(candidate, os.X_OK) else None
+    return shutil.which(command)
+
+
+def toml_interpreter() -> str:
+    configured = os.environ.get("CODEX_ROOM_TOML_PYTHON")
+    if configured:
+        return configured
+    for candidate in ("python3.12", "python3.11"):
+        if command_path(candidate):
+            return candidate
+    # The verifier only needs tomllib for one set of checks.  Keep the
+    # fallback explicit so a Python 3.9 default cannot be mistaken for the
+    # configured parser on hosts that provide a newer interpreter.
+    return sys.executable
+
+
+def required_commands(apply: bool) -> list[str]:
+    commands = ["git", "node", os.environ.get("PASEO_NPM_BIN", "npm"), "jq"]
+    if not os.environ.get("CODEX_ROOM_MODEL_CATALOG"):
+        commands.append(os.environ.get("CODEX_BIN", "codex"))
+    return commands
+
+
+def check_commands(apply: bool) -> None:
+    missing = [name for name in required_commands(apply) if not command_path(name)]
+    if missing:
+        fail("required command(s) missing: " + ", ".join(missing))
+
+
+def safe_read_source(relative: str) -> Path:
+    path = HOME_MIRROR / relative
+    if not path.is_file():
+        fail(f"tracked installer source is missing: {path}")
+    return path
+
+
+def render_source(source: Path, home: Path, destination: Path) -> None:
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    destination.write_bytes(source.read_bytes().replace(b"@@HOME@@", str(home).encode()))
+
+
+def obsolete_state(home: Path) -> list[tuple[str, str]]:
+    result: list[tuple[str, str]] = []
+    for relative, known_hashes in OBSOLETE_HASHES.items():
+        path = home / relative
+        if not path.exists() and not path.is_symlink():
+            continue
+        if (
+            path.is_file()
+            and not path.is_symlink()
+            and sha256(path) in known_hashes
+            and lstat_mode(path) == OBSOLETE_MODES[relative]
+        ):
+            result.append((relative, "retire"))
+        else:
+            result.append((relative, "preserve-warning"))
+    return result
+
+
+def check_managed_obstacles(home: Path) -> None:
+    for _, relative, _ in MANAGED_FILES:
+        path = home / relative
+        check_direct_parents(path.parent, home)
+        if not path.exists() and not path.is_symlink():
+            continue
+        if path.is_symlink() or not path.is_file():
+            fail(f"managed target is an unsafe obstacle: {path}")
+    for relative in OBSOLETE_HASHES:
+        check_direct_parents((home / relative).parent, home)
+    for relative, state in obsolete_state(home):
+        if state == "preserve-warning":
+            warn(f"preserving customized/private obsolete path: {home / relative}")
+
+
+def check_direct_parents(path: Path, boundary: Optional[Path] = None) -> None:
+    """Reject redirects before any managed target can be published."""
+    candidate = path
+    if boundary is not None:
+        boundary = boundary.resolve()
+    while boundary is None or candidate != boundary:
+        if candidate.is_symlink() or (candidate.exists() and not candidate.is_dir()):
+            fail(f"managed parent is not a direct directory: {candidate}")
+        if candidate.parent == candidate:
+            break
+        candidate = candidate.parent
+        if boundary is not None and len(candidate.parts) < len(boundary.parts):
+            fail(f"managed path escapes operator home: {path}")
+
+
+def check_runtime_obstacles(home: Path) -> None:
+    runtime_root = runtime_path(home)
+    if runtime_root.is_symlink() or (runtime_root.exists() and not runtime_root.is_dir()):
+        fail(f"runtime root is not a direct directory: {runtime_root}")
+    if runtime_root.exists():
+        for role in ROLES:
+            role_root = runtime_root / role
+            if role_root.is_symlink() or (role_root.exists() and not role_root.is_dir()):
+                fail(f"runtime role directory is not a direct directory: {role_root}")
+            if not role_root.exists():
+                continue
+            for name in ("config.toml", "model-catalog.no-native-agents.json"):
+                path = role_root / name
+                if path.is_symlink() or (path.exists() and not path.is_file()):
+                    fail(f"managed runtime output is an unsafe obstacle: {path}")
+            for name in ROLE_SHARED:
+                path = role_root / name
+                expected = home / ".codex" / name
+                if path.exists() or path.is_symlink():
+                    if not same_link(path, expected):
+                        fail(f"runtime shared path is redirected or customized: {path}")
+            path = role_root / "model-instructions.md"
+            expected = home / ".config/codex-room/model-instructions.md"
+            if path.exists() or path.is_symlink():
+                if not same_link(path, expected):
+                    fail(f"runtime shared path is redirected or customized: {path}")
+    check_direct_parents(runtime_root)
+
+
+def check_paseo_obstacles(paths: dict[str, Path | str], home: Path) -> None:
+    target = paths["paseo_target"]
+    cli = paths["paseo_cli"]
+    assert isinstance(target, Path) and isinstance(cli, Path)
+    check_direct_parents(target.parent)
+    check_direct_parents(cli.parent)
+    if cli.exists() and cli.is_dir() and not cli.is_symlink():
+        fail(f"Paseo CLI link is an unsafe directory obstacle: {cli}")
+
+
+def check_operator_codex(home: Path) -> None:
+    codex = home / ".codex"
+    if codex.is_symlink() or not codex.is_dir():
+        fail(f"operator Codex home is missing or redirected: {codex}")
+    for name in ("config.toml",) + ROLE_SHARED:
+        path = codex / name
+        if not path.exists() and not path.is_symlink():
+            fail(f"operator Codex prerequisite is missing: {path}")
+        if path.is_symlink() and not path.exists():
+            fail(f"operator Codex prerequisite is a dangling link: {path}")
+
+
+def runtime_path(home: Path) -> Path:
+    configured = Path(os.environ.get("CODEX_ROOM_RUNTIME_ROOT", str(home / ".codex-runtime"))).expanduser()
+    return configured if configured.is_absolute() else configured.absolute()
+
+
+def git_read(repo: Path, *args: str) -> str:
+    environment = os.environ.copy()
+    environment["GIT_OPTIONAL_LOCKS"] = "0"
+    completed = subprocess.run(
+        ["git", "-C", str(repo), *args],
+        env=environment,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return completed.stdout.strip()
+
+
+def git_read_optional(repo: Path, *args: str) -> str:
+    try:
+        return git_read(repo, *args)
+    except subprocess.CalledProcessError:
+        return ""
+
+
+def validate_existing_paseo(paths: dict[str, Path | str]) -> None:
+    target = paths["paseo_target"]
+    assert isinstance(target, Path)
+    if not target.exists() and not target.is_symlink():
+        return
+    if target.is_symlink() or not target.is_dir() or not (target / ".git").is_dir() or (target / ".git").is_symlink():
+        fail(f"Paseo target exists but is not a direct checkout: {target}")
+    branch = str(paths["branch"])
+    if git_read(target, "branch", "--show-current") != branch:
+        fail(f"Paseo checkout is not on {branch}: {target}")
+    if git_read(target, "status", "--porcelain", "--untracked-files=no"):
+        fail(f"Paseo tracked files or index are dirty: {target}")
+    if git_read_optional(target, "config", "--get", "core.hooksPath"):
+        fail("Paseo checkout has a custom core.hooksPath")
+    remotes = git_read(target, "remote").splitlines()
+    origin = git_read_optional(target, "remote", "get-url", "origin") if "origin" in remotes else ""
+    upstream = git_read_optional(target, "remote", "get-url", "upstream") if "upstream" in remotes else ""
+    legacy = git_read_optional(target, "remote", "get-url", "hoangnb24") if "hoangnb24" in remotes else ""
+    expected_origin = str(paths["fork"])
+    expected_upstream = str(paths["upstream"])
+    normalized = remotes == ["origin", "upstream"] and origin == expected_origin and upstream == expected_upstream and not legacy
+    legacy_topology = remotes == ["hoangnb24", "origin"] and origin == expected_upstream and legacy == expected_origin and not upstream
+    if not (normalized or legacy_topology):
+        fail("Paseo checkout has an unrecognized remote topology")
+    tracking = git_read_optional(target, "config", "--get", f"branch.{branch}.remote")
+    merge = git_read_optional(target, "config", "--get", f"branch.{branch}.merge")
+    if tracking != "origin" or merge != f"refs/heads/{branch}":
+        fail("Paseo checkout has unexpected branch tracking")
+
+
+def run_preflight_paseo(paths: dict[str, Path | str], home: Path) -> None:
+    validate_existing_paseo(paths)
+    helper = os.environ.get("PASEO_INSTALL_BIN", str(PASEO_SOURCE))
+    if not command_path(helper):
+        fail(f"Paseo installer is missing or not executable: {helper}")
+    environment = os.environ.copy()
+    environment["HOME"] = str(home)
+    environment["PASEO_REPO_DIR"] = str(paths["paseo_target"])
+    environment["PASEO_CLI_LINK"] = str(paths["paseo_cli"])
+    environment["PASEO_FORK_URL"] = str(paths["fork"])
+    environment["PASEO_UPSTREAM_URL"] = str(paths["upstream"])
+    environment["PASEO_BRANCH"] = str(paths["branch"])
+    environment["PASEO_VERIFIED_COMMIT"] = str(paths["commit"])
+    # npm may otherwise write cache metadata under the operator HOME during a
+    # read-only preflight.  Keep dependency preparation wholly disposable.
+    with tempfile.TemporaryDirectory(prefix="codex-room-npm-cache-", dir=os.environ.get("TMPDIR")) as cache:
+        environment["npm_config_cache"] = cache
+        completed = subprocess.run([helper, "--preflight"], env=environment, text=True)
+        if completed.returncode:
+            fail(f"Paseo preflight failed with status {completed.returncode}")
+
+
+def setup_stage_canonical(stage: Path, home: Path) -> Path:
+    canonical = stage / "canonical"
+    canonical.mkdir(mode=0o700)
+    operator = home / ".codex"
+    # Symlinks keep operator credentials and private resources out of staging
+    # and make it impossible for the installer to accidentally export them.
+    for name in ("config.toml",) + ROLE_SHARED:
+        (canonical / name).symlink_to(operator / name)
+    render_source(safe_read_source(".config/codex-room/model-instructions.md"), home, canonical / "model-instructions.md")
+    for role in ROLES:
+        source = safe_read_source(f".config/codex-room/overlays/{role}.config.toml")
+        (canonical / f"{role}.config.toml").write_bytes(source.read_bytes())
+        (canonical / f"{role}.config.toml").chmod(0o600)
+    return canonical
+
+
+def generate_role_stage(stage: Path, home: Path) -> dict[str, list[tuple[Path, str, Path | str, int]]]:
+    runtime_stage = stage / "runtime"
+    canonical = setup_stage_canonical(stage, home)
+    sync_bin = os.environ.get("CODEX_ROOM_SYNC_BIN", str(SYNC_SOURCE))
+    if not command_path(sync_bin):
+        fail(f"runtime generator is missing or not executable: {sync_bin}")
+    environment = os.environ.copy()
+    environment["HOME"] = str(home)
+    environment["CODEX_ROOM_LAB_ROOT"] = str(stage)
+    environment["CODEX_ROOM_RUNTIME_ROOT"] = str(runtime_stage)
+    for role in ROLES:
+        completed = subprocess.run([sync_bin, role], env=environment, text=True, capture_output=True)
+        if completed.returncode:
+            sys.stderr.write(completed.stderr)
+            fail(f"runtime generation failed for {role} with status {completed.returncode}")
+
+    outputs: dict[str, list[tuple[Path, str, Path | str, int]]] = {}
+    actual_runtime = runtime_path(home)
+    room_config = home / ".config/codex-room/model-instructions.md"
+    operator = home / ".codex"
+    for role in ROLES:
+        staged_role = runtime_stage / role
+        if staged_role.is_symlink() or not staged_role.is_dir():
+            fail(f"runtime generator did not produce a direct role directory: {role}")
+        config = staged_role / "config.toml"
+        catalog = staged_role / "model-catalog.no-native-agents.json"
+        if config.is_symlink() or not config.is_file() or catalog.is_symlink() or not catalog.is_file():
+            fail(f"runtime generator did not produce managed outputs for {role}")
+        config_text = config.read_text().replace(str(runtime_stage), str(actual_runtime))
+        config.write_text(config_text)
+        outputs[role] = [
+            (config, "file", config, 0o600),
+            (catalog, "file", catalog, 0o600),
+        ]
+        for name in ROLE_SHARED:
+            outputs[role].append((operator / name, "link", operator / name, 0o777))
+        for name in ROOM_SHARED:
+            outputs[role].append((room_config, "link", room_config, 0o777))
+    return outputs
+
+
+class Transaction:
+    def __init__(self, home: Path) -> None:
+        stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
+        self.home = home
+        self.root = home / ".codex-room-backups" / f"core3-{stamp}-{os.getpid()}"
+        self.root.mkdir(parents=True, exist_ok=False)
+        self.root.chmod(0o700)
+        self.entries: list[tuple[Path, Optional[Path], bool, int]] = []
+        self.created_dirs: list[Path] = []
+        self.mode_changes: list[tuple[Path, int]] = []
+        self.paseo_target: Optional[Path] = None
+        self.paseo_target_backup: Optional[Path] = None
+        self.paseo_target_existed = False
+        self.paseo_target_modes: dict[str, int] = {}
+        self.paseo_cli: Optional[Path] = None
+        self.paseo_cli_backup: Optional[Path] = None
+        self.paseo_cli_existed = False
+        self.paseo_cli_mode = 0
+        self.paseo_created_dirs: list[Path] = []
+
+    def backup_target(self, target: Path, label: str) -> None:
+        if any(entry[0] == target for entry in self.entries):
+            return
+        if target.exists() or target.is_symlink():
+            backup = make_backup_copy(target, self.root, f"managed/{label}")
+            self.entries.append((target, backup, True, lstat_mode(target)))
+        else:
+            self.entries.append((target, None, False, 0))
+
+    def set_mode(self, target: Path, mode: int) -> None:
+        if target.is_symlink() or not target.is_dir():
+            fail(f"cannot set mode on non-directory runtime path: {target}")
+        current = lstat_mode(target)
+        if current != mode and not any(path == target for path, _ in self.mode_changes):
+            self.mode_changes.append((target, current))
+        target.chmod(mode)
+
+    def publish_file(self, target: Path, staged: Path, mode: int, label: str) -> bool:
+        if target.exists() or target.is_symlink():
+            if target.is_symlink() or not target.is_file():
+                fail(f"managed target changed into an unsafe obstacle: {target}")
+            if same_file(target, staged, mode):
+                return False
+        mkdir_parents(target.parent, self.created_dirs)
+        self.backup_target(target, label)
+        descriptor, temporary_name = tempfile.mkstemp(prefix=f".{target.name}.core3-", dir=target.parent)
+        temporary = Path(temporary_name)
+        try:
+            os.close(descriptor)
+            shutil.copyfile(staged, temporary)
+            temporary.chmod(mode)
+            os.replace(temporary, target)
+        finally:
+            if temporary.exists() or temporary.is_symlink():
+                temporary.unlink()
+        return True
+
+    def publish_link(self, target: Path, link_target: Path, label: str) -> bool:
+        if target.is_symlink() and os.readlink(target) == str(link_target):
+            return False
+        if target.exists() or target.is_symlink():
+            fail(f"runtime shared path changed into an unsafe obstacle: {target}")
+        mkdir_parents(target.parent, self.created_dirs)
+        self.backup_target(target, label)
+        temporary_directory = Path(tempfile.mkdtemp(prefix=f".{target.name}.core3-", dir=target.parent))
+        temporary = temporary_directory / "entry"
+        try:
+            temporary.symlink_to(link_target, target_is_directory=link_target.is_dir())
+            os.replace(temporary, target)
+        finally:
+            if temporary.exists() or temporary.is_symlink():
+                temporary.unlink()
+            temporary_directory.rmdir()
+        return True
+
+    def retire(self, target: Path, label: str) -> bool:
+        if not target.exists() and not target.is_symlink():
+            return False
+        if target.is_symlink() or not target.is_file():
+            warn(f"preserving customized/private obsolete path: {target}")
+            return False
+        self.backup_target(target, label)
+        target.unlink()
+        return True
+
+    def snapshot_paseo(self, target: Path, cli: Path) -> None:
+        self.paseo_target = target
+        self.paseo_cli = cli
+        for candidate in (target.parent, cli.parent):
+            missing: list[Path] = []
+            while not candidate.exists() and not candidate.is_symlink():
+                missing.append(candidate)
+                candidate = candidate.parent
+            if candidate.is_symlink() or (candidate.exists() and not candidate.is_dir()):
+                fail(f"Paseo parent is not a directory: {candidate}")
+            for directory in missing:
+                if directory not in self.paseo_created_dirs:
+                    self.paseo_created_dirs.append(directory)
+        if target.exists() or target.is_symlink():
+            self.paseo_target_existed = True
+            self.paseo_target_modes = tree_modes(target)
+            self.paseo_target_backup = make_backup_copy(target, self.root, "paseo/checkout")
+        if cli.exists() or cli.is_symlink():
+            self.paseo_cli_existed = True
+            self.paseo_cli_mode = lstat_mode(cli)
+            self.paseo_cli_backup = make_backup_copy(cli, self.root, "paseo/cli")
+
+    def restore_paseo(self) -> None:
+        if self.paseo_target is not None:
+            remove_entry(self.paseo_target)
+            if self.paseo_target_existed and self.paseo_target_backup is not None:
+                copy_entry(self.paseo_target_backup, self.paseo_target)
+                restore_tree_modes(self.paseo_target, self.paseo_target_modes)
+        if self.paseo_cli is not None:
+            remove_entry(self.paseo_cli)
+            if self.paseo_cli_existed and self.paseo_cli_backup is not None:
+                copy_entry(self.paseo_cli_backup, self.paseo_cli)
+                if not self.paseo_cli.is_symlink():
+                    self.paseo_cli.chmod(self.paseo_cli_mode)
+        for directory in sorted(self.paseo_created_dirs, key=lambda item: len(item.parts), reverse=True):
+            try:
+                directory.rmdir()
+            except OSError:
+                pass
+
+    def rollback(self) -> None:
+        self.restore_paseo()
+        for target, backup, existed, mode in reversed(self.entries):
+            remove_entry(target)
+            if existed and backup is not None:
+                copy_entry(backup, target)
+                if not target.is_symlink():
+                    target.chmod(mode)
+        for directory, mode in reversed(self.mode_changes):
+            if directory.exists() and not directory.is_symlink():
+                directory.chmod(mode)
+        for directory in sorted(self.created_dirs, key=lambda item: len(item.parts), reverse=True):
+            try:
+                directory.rmdir()
+            except OSError:
+                pass
+
+
+def stage_home(stage: Path, home: Path) -> dict[str, Path]:
+    rendered: dict[str, Path] = {}
+    for source_relative, target_relative, mode in MANAGED_FILES:
+        source = safe_read_source(source_relative)
+        destination = stage / "home" / target_relative
+        render_source(source, home, destination)
+        destination.chmod(mode)
+        rendered[target_relative] = destination
+    return rendered
+
+
+def print_plan(home: Path) -> int:
+    manifest = parse_manifest()
+    paths = configured_paths(home, manifest)
+    out("CORE-3 INSTALL PLAN (read-only; no filesystem publication)")
+    out(f"PREFLIGHT  Paseo {paths['commit']} from {paths['fork']}")
+    out(f"PASEO     checkout {paths['paseo_target']}")
+    out(f"PASEO     CLI link {paths['paseo_cli']}")
+    out("INSTALL   managed HOME files:")
+    for source_relative, relative, mode in MANAGED_FILES:
+        target = home / relative
+        expected = safe_read_source(source_relative).read_bytes().replace(b"@@HOME@@", str(home).encode())
+        state = (
+            "unchanged"
+            if target.is_file()
+            and not target.is_symlink()
+            and target.read_bytes() == expected
+            and lstat_mode(target) == mode
+            else ("replace" if target.exists() or target.is_symlink() else "create")
+        )
+        out(f"  {state.upper():7} {target} mode={mode:04o}")
+    for relative, state in obsolete_state(home):
+        out(f"  {state.upper():17} {home / relative}")
+    out("GENERATE  supervisor, lead, peer into existing CODEX runtime root")
+    out("APPLY     staged Paseo/config/runtime publication with rollback on failure")
+    out("VERIFY    installed state plus live provider inventory (use --verify; read-only)")
+    try:
+        check_commands(False)
+        check_managed_obstacles(home)
+        check_operator_codex(home)
+        check_runtime_obstacles(home)
+        check_paseo_obstacles(paths, home)
+        validate_existing_paseo(paths)
+    except (InstallError, OSError, subprocess.CalledProcessError) as error:
+        warn(str(error))
+        return 1
+    return 0
+
+
+def apply_install(home: Path) -> int:
+    manifest = parse_manifest()
+    paths = configured_paths(home, manifest)
+    transaction: Optional[Transaction] = None
+    try:
+        check_commands(True)
+        check_managed_obstacles(home)
+        check_operator_codex(home)
+        check_runtime_obstacles(home)
+        check_paseo_obstacles(paths, home)
+        validate_existing_paseo(paths)
+        # A disposable preflight validates the exact remote pin, npm lock and
+        # existing checkout before a transaction backup or live write exists.
+        run_preflight_paseo(paths, home)
+        transaction = Transaction(home)
+        with tempfile.TemporaryDirectory(prefix="codex-room-core3-", dir=os.environ.get("TMPDIR")) as temporary:
+            stage = Path(temporary)
+            rendered = stage_home(stage, home)
+            role_outputs = generate_role_stage(stage, home)
+
+            # The only publish operations below are managed files, generated
+            # role outputs, and the separately-owned Paseo checkout/link.
+            target = paths["paseo_target"]
+            cli = paths["paseo_cli"]
+            assert isinstance(target, Path) and isinstance(cli, Path)
+            transaction.snapshot_paseo(target, cli)
+            helper = os.environ.get("PASEO_INSTALL_BIN", str(PASEO_SOURCE))
+            environment = os.environ.copy()
+            environment["HOME"] = str(home)
+            environment["PASEO_REPO_DIR"] = str(target)
+            environment["PASEO_CLI_LINK"] = str(cli)
+            environment["PASEO_FORK_URL"] = str(paths["fork"])
+            environment["PASEO_UPSTREAM_URL"] = str(paths["upstream"])
+            environment["PASEO_BRANCH"] = str(paths["branch"])
+            environment["PASEO_VERIFIED_COMMIT"] = str(paths["commit"])
+            completed = subprocess.run([helper], env=environment, text=True, capture_output=True)
+            if completed.stdout:
+                sys.stdout.write(completed.stdout)
+            if completed.returncode:
+                if completed.stderr:
+                    sys.stderr.write(completed.stderr)
+                fail(f"Paseo publish failed with status {completed.returncode}")
+
+            for _, relative, mode in MANAGED_FILES:
+                transaction.publish_file(home / relative, rendered[relative], mode, relative.replace("/", "_"))
+            for relative, state in obsolete_state(home):
+                if state == "retire":
+                    transaction.retire(home / relative, relative.replace("/", "_"))
+
+            runtime_root = runtime_path(home)
+            if runtime_root.is_symlink() or (runtime_root.exists() and not runtime_root.is_dir()):
+                fail(f"runtime root is not a direct directory: {runtime_root}")
+            if not runtime_root.exists():
+                runtime_root.mkdir(mode=0o700)
+                transaction.created_dirs.append(runtime_root)
+            else:
+                transaction.set_mode(runtime_root, 0o700)
+            for role in ROLES:
+                role_root = runtime_root / role
+                if role_root.is_symlink() or (role_root.exists() and not role_root.is_dir()):
+                    fail(f"runtime role directory is not a direct directory: {role_root}")
+                if not role_root.exists():
+                    role_root.mkdir(mode=0o700)
+                    transaction.created_dirs.append(role_root)
+                else:
+                    transaction.set_mode(role_root, 0o700)
+                for staged, kind, value, mode in role_outputs[role]:
+                    if kind == "file":
+                        target_path = role_root / staged.name
+                        transaction.publish_file(target_path, staged, mode, f"{role}_{staged.name}")
+                    else:
+                        assert isinstance(value, Path)
+                        target_path = role_root / value.name
+                        if target_path.exists() or target_path.is_symlink():
+                            if not same_link(target_path, value):
+                                fail(f"runtime shared path is redirected or customized: {target_path}")
+                        else:
+                            transaction.publish_link(target_path, value, f"{role}_{value.name}")
+
+            verify_bin = os.environ.get("CODEX_ROOM_VERIFY_BIN", str(VERIFY_SOURCE))
+            verify_env = os.environ.copy()
+            verify_env["HOME"] = str(home)
+            verify_env["CODEX_ROOM_ALLOW_PRESERVED_OBSOLETE"] = "1"
+            verify_env.setdefault("CODEX_ROOM_TOML_PYTHON", toml_interpreter())
+            completed = subprocess.run([verify_bin], env=verify_env, text=True, capture_output=True)
+            if completed.stdout:
+                sys.stdout.write(completed.stdout)
+            if completed.returncode:
+                if completed.stderr:
+                    sys.stderr.write(completed.stderr)
+                fail(f"final installed verification failed with status {completed.returncode}")
+        restrict_tree(transaction.root)
+        out(f"CORE3_APPLY_OK backup={transaction.root}")
+        return 0
+    except (InstallError, OSError, subprocess.CalledProcessError) as error:
+        if transaction is not None:
+            try:
+                transaction.rollback()
+                restrict_tree(transaction.root)
+            except Exception as rollback_error:  # pragma: no cover - last-resort signal
+                warn(f"rollback encountered an additional error: {rollback_error}")
+        warn(str(error))
+        return 1
+
+
+def verify_install(home: Path, live: bool) -> int:
+    verify_bin = os.environ.get("CODEX_ROOM_VERIFY_BIN", str(VERIFY_SOURCE))
+    if not command_path(verify_bin):
+        warn(f"verifier is missing or not executable: {verify_bin}")
+        return 1
+    environment = os.environ.copy()
+    environment["HOME"] = str(home)
+    environment["CODEX_ROOM_ALLOW_PRESERVED_OBSOLETE"] = "1"
+    environment.setdefault("CODEX_ROOM_TOML_PYTHON", toml_interpreter())
+    # The public verification lifecycle includes the read-only provider
+    # inventory.  A missing daemon therefore fails visibly; callers can use
+    # the lower-level scripts/verify command when they need installed-only
+    # diagnostics during development.
+    arguments = [verify_bin, "--live"]
+    completed = subprocess.run(arguments, env=environment, text=True)
+    return completed.returncode
+
+
+def parse_arguments(argv: Iterable[str]) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="transactional Codex Room installer")
+    modes = parser.add_mutually_exclusive_group()
+    modes.add_argument("--apply", action="store_true", help="publish the prepared installation")
+    modes.add_argument("--verify", action="store_true", help="verify an existing installation")
+    modes.add_argument("--dry-run", action="store_true", help="show the non-mutating plan (the default)")
+    parser.add_argument("--live", action="store_true", help="include live Paseo provider inventory with --verify")
+    return parser.parse_args(list(argv))
+
+
+def main(argv: Iterable[str] = ()) -> int:
+    arguments = parse_arguments(argv)
+    home = Path(os.environ.get("HOME", str(Path.home()))).expanduser().resolve()
+    try:
+        if arguments.live and not arguments.verify:
+            raise InstallError("--live requires --verify")
+        if arguments.verify:
+            return verify_install(home, arguments.live)
+        if arguments.apply:
+            return apply_install(home)
+        return print_plan(home)
+    except (InstallError, OSError, subprocess.CalledProcessError) as error:
+        warn(str(error))
+        return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv[1:]))

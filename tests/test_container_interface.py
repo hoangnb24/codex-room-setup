@@ -23,7 +23,7 @@ class ContainerAcceptanceInterfaceTests(unittest.TestCase):
             self.dockerfile,
             r"(?m)^FROM mcr\.microsoft\.com/devcontainers/javascript-node:1-22-bookworm@sha256:[0-9a-f]{64}$",
         )
-        self.assertIn('"$source_root/scripts/bootstrap" --apply', self.accept)
+        self.assertIn('"$source_root/install" --apply', self.accept)
         self.assertIn("for pass in fresh repeated", self.accept)
         self.assertIn("tests/fixtures/model-catalog.json", self.accept)
 

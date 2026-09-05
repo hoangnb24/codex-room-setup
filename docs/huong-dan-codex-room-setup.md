@@ -39,7 +39,7 @@ một Peer mới ở chế độ chỉ đọc để xem đúng candidate hoặc 
 
 ## Cài đặt và sinh runtime
 
-`home/` là bản mirror của `$HOME`. `scripts/install --apply` cài overlay, chỉ
+`home/` là bản mirror của `$HOME`. `./install --apply` cài overlay, chỉ
 dẫn chung, workspace protocol, launcher, và cấu hình Paseo. Script không ghi
 vào `~/.codex`.
 
@@ -71,26 +71,25 @@ Không lặp lại truy vấn khi state chưa đổi.
 ## Các lệnh thường dùng
 
 ```bash
+# Xem kế hoạch đầy đủ, không ghi filesystem
+./install
+
+# Cài đặt đầy đủ với transaction/rollback
+./install --apply
+
+# Kiểm tra installed và live provider (daemon phải đang chạy)
+./install --verify
+
 # Kiểm tra source, không cần runtime đã cài
 ./scripts/verify --source
-
-# Cài cấu hình vào HOME đã chuẩn bị
-./scripts/install --apply
-
-# Sinh lại một role hoặc cả ba role
-./scripts/sync-all peer
-./scripts/sync-all
-
-# Kiểm tra runtime đã cài
-./scripts/verify
 
 # Chạy test của repository
 make test
 ```
 
 Sau khi thay provider catalog trong `home/.paseo/config.json.template`, chạy
-`make test`, `./scripts/verify --source`, cài lại, restart Paseo, rồi chạy
-`./scripts/verify --live` nếu daemon đang hoạt động. Kiểm tra live provider và
+`make test`, `./scripts/verify --source`, `./install --apply`, restart Paseo,
+rồi chạy `./install --verify` nếu daemon đang hoạt động. Kiểm tra live provider và
 MCP là bước vận hành của operator, không được suy ra chỉ từ test source.
 
 ## Sửa ở đâu?

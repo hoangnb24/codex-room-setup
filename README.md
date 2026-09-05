@@ -43,21 +43,23 @@ Prerequisites:
 git clone <this-repository-url> codex-room-setup
 cd codex-room-setup
 
-./scripts/doctor
-./scripts/bootstrap               # dry-run: show every pinned dependency/action
-./scripts/bootstrap --apply       # install dependencies, config and three runtimes
+./install                         # read-only plan and prerequisite check
+./install --apply                 # transactional Paseo/config/runtime install
+./install --verify                # installed checks plus live provider inventory
 ```
 
-`scripts/bootstrap` normalizes the Paseo checkout to `origin = hoangnb24 fork`
-and `upstream = public repo`, then installs Paseo's npm dependencies and the
-three role runtimes. It does not install or authenticate Codex or build Paseo
-Desktop. The lower-level `install`,
-`install-paseo-fork`, `sync-all`, and `verify` commands remain available for
-targeted maintenance.
+The root command preflights the pinned Paseo checkout, renders managed HOME
+files, stages all three role runtimes, and publishes the complete transition
+with rollback on a dependency, generation, or final verification failure. It
+does not install or authenticate Codex, touch `~/.codex`, start a daemon, or
+build Paseo Desktop. `./install --verify` is read-only and fails when the live
+Paseo provider inventory cannot be reached; use `scripts/verify` for an
+installed-only diagnostic. The lower-level scripts remain available for
+targeted maintenance and are not the normal fresh-install lifecycle.
 
 ## Disposable container acceptance test
 
-With Docker available, one command exercises the real bootstrap twice against
+With Docker available, one command exercises the public installer twice against
 a fresh, fake operator home:
 
 ```bash
@@ -78,17 +80,16 @@ repeatability, and preservation boundaries. It does not prove Paseo Desktop or
 GUI behavior, macOS signing/TCC/application restart, or a live Paseo daemon or
 Codex session.
 
-The Paseo source manifest pins an immutable commit. Bootstrap preflights Paseo
-in a disposable location before changing live state. Paseo uses
+The Paseo source manifest pins an immutable commit. The public installer
+preflights Paseo in a disposable location before changing live state. Paseo uses
 `npm ci` and refuses custom Git hooks because its audited `prepare` lifecycle
 installs lefthook; updates are exact-pin/no-op or fast-forward-only and never
 silently pull from public upstream.
 
-The installer backs up every replaced file under:
-
-```text
-~/.codex-room-backups/install-<UTC timestamp>/
-```
+The installer backs up every replaced managed file and the Paseo checkout under
+`~/.codex-room-backups/core3-<UTC timestamp>-<pid>/` with owner-only
+permissions. Customized obsolete files are preserved with a warning; only
+recognized, unchanged legacy artifacts are retired after backup.
 
 It never writes to `~/.codex`.
 
@@ -128,8 +129,8 @@ change a technical decision. All role overlays currently request `danger-full-ac
 # Validate source only, without requiring installed runtimes
 ./scripts/verify --source
 
-# Include live Paseo checks
-./scripts/verify --live
+# Verify installed state and the live Paseo provider inventory
+./install --verify
 
 # Export sanitized runtime summaries for local comparison
 ./scripts/export-runtime-snapshots

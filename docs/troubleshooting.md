@@ -19,7 +19,7 @@ The operator's `~/.codex` is incomplete for this setup. Check the exact missing 
 2. Confirm its custom commands point to `~/.local/bin/codex-room`.
 3. Confirm `~/.local/bin` is on the daemon's PATH.
 4. Restart Paseo when no agent is running.
-5. Run `scripts/verify --live`.
+5. Run `./install --verify`.
 
 ## Daemon PID and listener disagree
 
@@ -31,4 +31,3 @@ lsof -nP -iTCP:6767 -sTCP:LISTEN
 ```
 
 A wrapper PID and child Node PID can differ. Diagnose before deleting PID or state files.
-

@@ -761,6 +761,308 @@ class SetupShapeTests(unittest.TestCase):
             for retired in ("PARALLEL_CHECK", "multiple-writer", "workflow pilot", "marker"):
                 self.assertNotIn(retired.casefold(), active.casefold())
 
+class PublicInstallTransactionTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.temporary = tempfile.TemporaryDirectory()
+        self.root = Path(self.temporary.name)
+        self.home = self.root / "home"
+        self.home.mkdir()
+        codex = self.home / ".codex"
+        codex.mkdir()
+        (codex / "config.toml").write_text(
+            'model = "operator-model"\n'
+            "\n[features]\n"
+            "multi_agent = true\n"
+            "multi_agent_v2 = true\n"
+            "\n[agents]\n"
+            "enabled = true\n"
+        )
+        for name in ("auth.json", "AGENTS.md", "hooks.json"):
+            (codex / name).write_text("operator\n")
+        for name in ("skills", "plugins"):
+            (codex / name).mkdir()
+            (codex / name / "operator.marker").write_text("private\n")
+
+    def tearDown(self) -> None:
+        self.temporary.cleanup()
+
+    def executable(self, path: Path, text: str) -> Path:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text)
+        path.chmod(0o755)
+        return path
+
+    def lifecycle_env(self, paseo: Path, verifier: Path) -> dict[str, str]:
+        return {
+            **os.environ,
+            "HOME": str(self.home),
+            "CODEX_ROOM_MODEL_CATALOG": str(ROOT / "tests/fixtures/model-catalog.json"),
+            "CODEX_ROOM_TOML_PYTHON": os.environ.get("CODEX_ROOM_TOML_PYTHON", sys.executable),
+            "PASEO_INSTALL_BIN": str(paseo),
+            "CODEX_ROOM_VERIFY_BIN": str(verifier),
+            "VERIFY_LOG": str(self.root / "verify.log"),
+        }
+
+    def make_fake_paseo(self) -> Path:
+        return self.executable(
+            self.root / "fake-paseo",
+            "#!/bin/sh\n"
+            "set -eu\n"
+            "if [ \"${1:-}\" = --preflight ]; then\n"
+            "  if [ \"${PREFLIGHT_FAIL:-0}\" = 1 ]; then exit 19; fi\n"
+            "  exit 0\n"
+            "fi\n"
+            "mkdir -p \"$PASEO_REPO_DIR/packages/cli/bin\"\n"
+            "if [ ! -d \"$PASEO_REPO_DIR/.git\" ]; then\n"
+            "  git init -q -b main \"$PASEO_REPO_DIR\"\n"
+            "  git -C \"$PASEO_REPO_DIR\" remote add origin \"$PASEO_FORK_URL\"\n"
+            "  git -C \"$PASEO_REPO_DIR\" remote add upstream \"$PASEO_UPSTREAM_URL\"\n"
+            "  git -C \"$PASEO_REPO_DIR\" config branch.main.remote origin\n"
+            "  git -C \"$PASEO_REPO_DIR\" config branch.main.merge refs/heads/main\n"
+            "  git -C \"$PASEO_REPO_DIR\" -c user.name=Test -c user.email=test@example.invalid commit --allow-empty -qm bootstrap\n"
+            "fi\n"
+            "printf '%s\\n' '#!/bin/sh' > \"$PASEO_REPO_DIR/packages/cli/bin/paseo\"\n"
+            "chmod 755 \"$PASEO_REPO_DIR/packages/cli/bin/paseo\"\n"
+            "mkdir -p \"$(dirname \"$PASEO_CLI_LINK\")\"\n"
+            "ln -sfn \"$PASEO_REPO_DIR/packages/cli/bin/paseo\" \"$PASEO_CLI_LINK\"\n",
+        )
+
+    def make_fake_verifier(self) -> Path:
+        return self.executable(
+            self.root / "fake-verify",
+            "#!/bin/sh\n"
+            "set -eu\n"
+            "printf '%s\\n' \"$*\" >> \"$VERIFY_LOG\"\n"
+            "if [ \"${VERIFY_FAIL:-0}\" = 1 ]; then exit 23; fi\n"
+            "test -f \"$HOME/.paseo/config.json\"\n"
+            "test -f \"$HOME/.codex-runtime/supervisor/config.toml\"\n"
+            "test -f \"$HOME/.codex-runtime/lead/config.toml\"\n"
+            "test -f \"$HOME/.codex-runtime/peer/config.toml\"\n",
+        )
+
+    def run_install(self, arguments: tuple[str, ...], env: dict[str, str]) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [str(ROOT / "install"), *arguments],
+            env=env,
+            capture_output=True,
+            text=True,
+        )
+
+    def tree_snapshot(self, root: Path) -> list[tuple[str, str, bytes | str, int]]:
+        if not root.exists() and not root.is_symlink():
+            return []
+        result: list[tuple[str, str, bytes | str, int]] = []
+        for path in sorted(root.rglob("*")):
+            relative = str(path.relative_to(root))
+            mode = path.lstat().st_mode & 0o777
+            if path.is_symlink():
+                result.append((relative, "link", os.readlink(path), mode))
+            elif path.is_file():
+                result.append((relative, "file", path.read_bytes(), mode))
+            else:
+                result.append((relative, "dir", b"", mode))
+        return result
+
+    def test_public_apply_stages_three_roles_is_repeatable_and_verify_is_live(self) -> None:
+        paseo = self.make_fake_paseo()
+        verifier = self.make_fake_verifier()
+        env = self.lifecycle_env(paseo, verifier)
+        first = self.run_install(("--apply",), env)
+        self.assertEqual(first.returncode, 0, first.stdout + first.stderr)
+        generated = self.home / ".codex-runtime"
+        first_configs = {
+            role: (generated / role / "config.toml").read_bytes()
+            for role in ("supervisor", "lead", "peer")
+        }
+        second = self.run_install(("--apply",), env)
+        self.assertEqual(second.returncode, 0, second.stdout + second.stderr)
+        self.assertEqual(
+            {role: (generated / role / "config.toml").read_bytes() for role in first_configs},
+            first_configs,
+        )
+        self.assertEqual((self.home / ".codex" / "auth.json").read_text(), "operator\n")
+        verify = self.run_install(("--verify",), env)
+        self.assertEqual(verify.returncode, 0, verify.stdout + verify.stderr)
+        self.assertEqual((self.root / "verify.log").read_text().splitlines()[-1], "--live")
+
+    def test_default_plan_is_complete_and_non_mutating(self) -> None:
+        paseo = self.make_fake_paseo()
+        verifier = self.make_fake_verifier()
+        env = self.lifecycle_env(paseo, verifier)
+        before = self.tree_snapshot(self.home)
+        planned = self.run_install((), env)
+        self.assertEqual(planned.returncode, 0, planned.stdout + planned.stderr)
+        self.assertIn("PREFLIGHT", planned.stdout)
+        self.assertIn("supervisor, lead, peer", planned.stdout)
+        self.assertIn("rollback on failure", planned.stdout)
+        self.assertEqual(self.tree_snapshot(self.home), before)
+
+    def test_immutable_manifest_pin_override_is_refused_before_mutation(self) -> None:
+        paseo = self.make_fake_paseo()
+        verifier = self.make_fake_verifier()
+        env = self.lifecycle_env(paseo, verifier)
+        before = self.tree_snapshot(self.home)
+        failed = self.run_install(("--apply",), {**env, "PASEO_VERIFIED_COMMIT": "0" * 40})
+        self.assertNotEqual(failed.returncode, 0)
+        self.assertIn("immutable Paseo commit", failed.stderr)
+        self.assertEqual(self.tree_snapshot(self.home), before)
+
+    def test_managed_target_obstacle_fails_closed_before_paseo_publish(self) -> None:
+        redirected = self.root / "redirected-instructions"
+        redirected.write_text("operator-owned bytes\n")
+        managed = self.home / ".config/codex-room/model-instructions.md"
+        managed.parent.mkdir(parents=True)
+        managed.symlink_to(redirected)
+        paseo = self.make_fake_paseo()
+        verifier = self.make_fake_verifier()
+        failed = self.run_install(("--apply",), self.lifecycle_env(paseo, verifier))
+        self.assertNotEqual(failed.returncode, 0)
+        self.assertTrue(managed.is_symlink())
+        self.assertEqual(redirected.read_text(), "operator-owned bytes\n")
+        self.assertFalse((self.home / "projects").exists())
+
+    def test_missing_resource_and_bad_catalog_fail_during_staging(self) -> None:
+        hooks = self.home / ".codex/hooks.json"
+        hooks.unlink()
+        paseo = self.make_fake_paseo()
+        verifier = self.make_fake_verifier()
+        missing = self.run_install(("--apply",), self.lifecycle_env(paseo, verifier))
+        self.assertNotEqual(missing.returncode, 0)
+        self.assertFalse((self.home / "projects").exists())
+
+        hooks.write_text("operator\n")
+        bad_catalog = self.root / "bad-catalog.json"
+        bad_catalog.write_text('{"models": []}\n')
+        failed = self.run_install(
+            ("--apply",),
+            {**self.lifecycle_env(paseo, verifier), "CODEX_ROOM_MODEL_CATALOG": str(bad_catalog)},
+        )
+        self.assertNotEqual(failed.returncode, 0)
+        self.assertFalse((self.home / "projects").exists())
+
+    def test_redirected_active_runtime_role_fails_before_publication(self) -> None:
+        redirected = self.root / "redirected-lead"
+        redirected.mkdir()
+        (redirected / "private.sqlite").write_bytes(b"private\x00")
+        runtime_root = self.home / ".codex-runtime"
+        runtime_root.mkdir()
+        (runtime_root / "lead").symlink_to(redirected, target_is_directory=True)
+        paseo = self.make_fake_paseo()
+        verifier = self.make_fake_verifier()
+        failed = self.run_install(("--apply",), self.lifecycle_env(paseo, verifier))
+        self.assertNotEqual(failed.returncode, 0)
+        self.assertTrue((runtime_root / "lead").is_symlink())
+        self.assertEqual((redirected / "private.sqlite").read_bytes(), b"private\x00")
+        self.assertFalse((self.home / "projects").exists())
+
+    def test_final_verification_failure_restores_managed_and_paseo_state(self) -> None:
+        paseo = self.make_fake_paseo()
+        verifier = self.make_fake_verifier()
+        env = self.lifecycle_env(paseo, verifier)
+        operator_before = self.tree_snapshot(self.home / ".codex")
+        failed = self.run_install(("--apply",), {**env, "VERIFY_FAIL": "1"})
+        self.assertNotEqual(failed.returncode, 0)
+        self.assertEqual(self.tree_snapshot(self.home / ".codex"), operator_before)
+        self.assertFalse((self.home / ".paseo").exists())
+        self.assertFalse((self.home / ".codex-runtime").exists())
+        self.assertFalse((self.home / "projects").exists())
+        self.assertFalse((self.home / ".local/bin/paseo").exists())
+        self.assertFalse((self.home / ".config/codex-room/model-instructions.md").exists())
+
+    def test_customized_obsolete_path_is_preserved_and_warned(self) -> None:
+        obsolete = self.home / ".config/codex-room/overlays/review.config.toml"
+        obsolete.parent.mkdir(parents=True)
+        obsolete.write_text("operator private review notes\n")
+        redirected = self.home / ".local/bin/codex-room-hard-cut"
+        redirected.parent.mkdir(parents=True)
+        redirected.symlink_to(self.home / "operator-private-tool")
+        paseo = self.make_fake_paseo()
+        verifier = self.make_fake_verifier()
+        completed = self.run_install(("--apply",), self.lifecycle_env(paseo, verifier))
+        self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+        self.assertEqual(obsolete.read_text(), "operator private review notes\n")
+        self.assertTrue(redirected.is_symlink())
+        self.assertIn("preserving customized/private obsolete path", completed.stderr)
+
+    def test_preflight_failure_preserves_an_existing_installation(self) -> None:
+        paseo = self.make_fake_paseo()
+        verifier = self.make_fake_verifier()
+        env = self.lifecycle_env(paseo, verifier)
+        first = self.run_install(("--apply",), env)
+        self.assertEqual(first.returncode, 0, first.stdout + first.stderr)
+        before = {
+            "config": self.tree_snapshot(self.home / ".config"),
+            "paseo": self.tree_snapshot(self.home / "projects"),
+            "runtime": self.tree_snapshot(self.home / ".codex-runtime"),
+            "cli": self.tree_snapshot(self.home / ".local"),
+        }
+        failed = self.run_install(("--apply",), {**env, "PREFLIGHT_FAIL": "1"})
+        self.assertNotEqual(failed.returncode, 0)
+        self.assertEqual(self.tree_snapshot(self.home / ".config"), before["config"])
+        self.assertEqual(self.tree_snapshot(self.home / "projects"), before["paseo"])
+        self.assertEqual(self.tree_snapshot(self.home / ".codex-runtime"), before["runtime"])
+        self.assertEqual(self.tree_snapshot(self.home / ".local"), before["cli"])
+
+    def test_generation_failure_happens_before_any_live_publication(self) -> None:
+        paseo = self.make_fake_paseo()
+        verifier = self.make_fake_verifier()
+        env = self.lifecycle_env(paseo, verifier)
+        failing_sync = self.executable(
+            self.root / "failing-sync",
+            "#!/bin/sh\n"
+            "set -eu\n"
+            "if [ \"$1\" = lead ]; then exit 29; fi\n"
+            f"exec \"{SYNC}\" \"$@\"\n",
+        )
+        failed = self.run_install(("--apply",), {**env, "CODEX_ROOM_SYNC_BIN": str(failing_sync)})
+        self.assertNotEqual(failed.returncode, 0)
+        self.assertFalse((self.home / ".paseo").exists())
+        self.assertFalse((self.home / ".codex-runtime").exists())
+        self.assertFalse((self.home / ".config").exists())
+        self.assertFalse((self.home / "projects").exists())
+
+    def test_replaced_managed_file_has_owner_only_backup(self) -> None:
+        managed = self.home / ".config/codex-room/model-instructions.md"
+        managed.parent.mkdir(parents=True)
+        managed.write_bytes(b"operator custom instructions\n")
+        managed.chmod(0o644)
+        paseo = self.make_fake_paseo()
+        verifier = self.make_fake_verifier()
+        completed = self.run_install(("--apply",), self.lifecycle_env(paseo, verifier))
+        self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+        backup = Path(next(line.split("backup=", 1)[1] for line in completed.stdout.splitlines() if "backup=" in line))
+        saved = backup / "managed/.config_codex-room_model-instructions.md"
+        self.assertEqual(saved.read_bytes(), b"operator custom instructions\n")
+        self.assertEqual(saved.stat().st_mode & 0o777, 0o600)
+        self.assertEqual(backup.stat().st_mode & 0o777, 0o700)
+
+    def test_existing_paseo_checkout_rollback_restores_private_tree_metadata(self) -> None:
+        paseo = self.make_fake_paseo()
+        verifier = self.make_fake_verifier()
+        env = self.lifecycle_env(paseo, verifier)
+        first = self.run_install(("--apply",), env)
+        self.assertEqual(first.returncode, 0, first.stdout + first.stderr)
+        checkout = self.home / "projects/supervisors/paseo"
+        runtime_root = self.home / ".codex-runtime"
+        for role in ("supervisor", "lead", "peer"):
+            (runtime_root / role).chmod(0o755)
+        runtime_root.chmod(0o755)
+        private = checkout / "node_modules/operator-private.bin"
+        private.parent.mkdir(parents=True)
+        private.write_bytes(b"private dependency bytes\x00")
+        private.chmod(0o640)
+        custom_hook = checkout / ".git/hooks/operator-hook"
+        custom_hook.write_text("#!/bin/sh\nexit 4\n")
+        custom_hook.chmod(0o700)
+        before = self.tree_snapshot(checkout)
+        failed = self.run_install(("--apply",), {**env, "VERIFY_FAIL": "1"})
+        self.assertNotEqual(failed.returncode, 0)
+        self.assertEqual(self.tree_snapshot(checkout), before)
+        self.assertEqual(runtime_root.stat().st_mode & 0o777, 0o755)
+        for role in ("supervisor", "lead", "peer"):
+            self.assertEqual((runtime_root / role).stat().st_mode & 0o777, 0o755)
+
+
 class RuntimeGenerationTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temporary = tempfile.TemporaryDirectory()

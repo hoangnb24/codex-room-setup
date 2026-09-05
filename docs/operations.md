@@ -4,9 +4,9 @@
 
 1. Edit `home/.config/codex-room/overlays/<role>.config.toml`.
 2. Run `make test` and `./scripts/verify --source`.
-3. Run `scripts/install --apply` to install the changed source.
-4. Run `scripts/sync-all <role>`.
-5. Run `scripts/verify` against the operator's prepared runtimes.
+3. Run `./install` to inspect the complete read-only plan.
+4. Run `./install --apply` to publish the changed source transactionally.
+5. Run `./install --verify` when the Paseo daemon is available.
 
 The three roles have distinct authority. Human keeps product, cost, external
 effect, and irreversible-risk decisions. Supervisor observes and routes Human
@@ -36,9 +36,9 @@ notebooks, runtime/session state, and operator-owned `.codex` bytes.
 
 1. Edit `home/.paseo/config.json.template`.
 2. Run `make test` and `./scripts/verify --source`.
-3. Install with backup using `scripts/install --apply`.
+3. Inspect `./install` and apply with `./install --apply`.
 4. Restart Paseo explicitly.
-5. Run `scripts/verify --live`.
+5. Run `./install --verify`.
 
 The installer does not restart the daemon because an active restart can
 interrupt running agents. The source contract keeps exactly three room
