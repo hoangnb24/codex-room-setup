@@ -71,7 +71,7 @@ The complete unit output is retained at
 
 On 2026-09-05, Lead tested implementation commit
 `f9a56017e0622158b6791355af1dc4dc181ee7df` in a separate clean clone.
-The only subsequent change is this evidence record. Independent CORE-4
+At the initial handoff, the only subsequent change was this evidence record. Independent CORE-4
 review found no functional blocker; CORE-3's six transaction findings had
 already passed their independent closeout.
 
@@ -108,6 +108,21 @@ The coordination session retains `unit.log`, `source.log`, `container.log`,
 full generated instructions, and changed-path manifests. The final immutable
 handoff and review status are recorded on
 [CORE-4](https://github.com/hoangnb24/codex-room-setup/issues/6).
+
+## Installation feedback: optional hooks
+
+The operator's first installation attempt exposed an overly strict prerequisite:
+`hooks.json` was required even when no hooks were configured. The installer and
+runtime generator now skip an absent hooks file, share an existing one, and
+reject an explicitly dangling hooks symlink. They do not create operator files.
+Other required resources retain their previous checks.
+
+Three focused regressions passed, covering public plan/apply/repeat and direct
+generation without hooks, hooks added later, dangling hooks, and required-resource
+or catalog failures. The read-only plan also passed against the reporting
+operator's existing home without creating `hooks.json`. The full-suite result
+and correction commit are recorded on PR #8. The container evidence above
+belongs to the original implementation; it was not rerun for this correction.
 
 ## Consolidated Human runbook
 

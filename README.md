@@ -38,8 +38,9 @@ Prerequisites:
 - macOS or another Unix-like environment with Bash, Python 3.11 or newer,
   Git, Node 22, npm, and jq.
 - Codex CLI installed and authenticated, with an existing `~/.codex/config.toml`,
-  `auth.json`, `AGENTS.md`, `hooks.json`, `skills/`, and `plugins/` available
-  for runtime sharing.
+  `auth.json`, `AGENTS.md`, `skills/`, and `plugins/` available for runtime
+  sharing. `hooks.json` is optional: an existing file is shared, while an
+  absent file is skipped without creating anything in the operator home.
 - `~/.local/bin` on `PATH`.
 
 ```bash

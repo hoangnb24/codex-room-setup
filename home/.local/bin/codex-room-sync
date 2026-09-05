@@ -24,7 +24,8 @@ OVERRIDE_KEYS = {
     "approval_policy",
     "approvals_reviewer",
 }
-SHARED_CODEX_RESOURCES = ("auth.json", "AGENTS.md", "hooks.json", "skills", "plugins")
+SHARED_CODEX_RESOURCES = ("auth.json", "AGENTS.md", "skills", "plugins")
+OPTIONAL_SHARED_CODEX_RESOURCES = ("hooks.json",)
 SHARED_ROOM_RESOURCES = ("model-instructions.md",)
 
 
@@ -133,6 +134,17 @@ def preflight_link(runtime: pathlib.Path, name: str, target: pathlib.Path) -> No
         raise SystemExit(f"refusing to replace non-symlink runtime path: {path}")
 
 
+def shared_codex_resources(codex_shared: pathlib.Path) -> tuple[str, ...]:
+    resources = list(SHARED_CODEX_RESOURCES)
+    for name in OPTIONAL_SHARED_CODEX_RESOURCES:
+        target = codex_shared / name
+        if target.is_symlink() and not target.exists():
+            raise SystemExit(f"shared target is a dangling link: {target}")
+        if target.exists() or target.is_symlink():
+            resources.append(name)
+    return tuple(resources)
+
+
 def source_catalog() -> dict:
     fixture = os.environ.get("CODEX_ROOM_MODEL_CATALOG")
     if fixture:
@@ -186,7 +198,8 @@ def main() -> None:
     catalog_content = prepare_catalog()
     model_catalog = runtime / "model-catalog.no-native-agents.json"
 
-    for name in SHARED_CODEX_RESOURCES:
+    shared_resources = shared_codex_resources(paths["codex_shared"])
+    for name in shared_resources:
         preflight_link(runtime, name, paths["codex_shared"] / name)
     for name in SHARED_ROOM_RESOURCES:
         preflight_link(runtime, name, paths["room_shared"] / name)
@@ -209,7 +222,7 @@ def main() -> None:
     write_atomic(model_catalog, catalog_content)
     write_atomic(runtime / "config.toml", merged)
 
-    for name in SHARED_CODEX_RESOURCES:
+    for name in shared_resources:
         safe_link(runtime, name, paths["codex_shared"] / name)
     for name in SHARED_ROOM_RESOURCES:
         safe_link(runtime, name, paths["room_shared"] / name)

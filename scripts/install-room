@@ -88,7 +88,8 @@ MANAGED_FILES = (
     (".paseo/config.json.template", ".paseo/config.json", 0o600),
 )
 
-ROLE_SHARED = ("auth.json", "AGENTS.md", "hooks.json", "skills", "plugins")
+ROLE_SHARED_REQUIRED = ("auth.json", "AGENTS.md", "skills", "plugins")
+ROLE_SHARED_OPTIONAL = ("hooks.json",)
 ROOM_SHARED = ("model-instructions.md",)
 
 
@@ -513,6 +514,18 @@ def runtime_path(home: Path) -> Path:
     return absolute_environment_path("CODEX_ROOM_RUNTIME_ROOT", home / ".codex-runtime")
 
 
+def shared_resources(home: Path) -> tuple[str, ...]:
+    """Return required shared resources plus optional hooks when present."""
+    result = list(ROLE_SHARED_REQUIRED)
+    for name in ROLE_SHARED_OPTIONAL:
+        target = home / ".codex" / name
+        if target.is_symlink() and not target.exists():
+            fail(f"operator Codex shared resource is a dangling link: {target}")
+        if target.exists() or target.is_symlink():
+            result.append(name)
+    return tuple(result)
+
+
 def backup_base_path(home: Path) -> Path:
     return absolute_environment_path("CODEX_ROOM_BACKUP_ROOT", home / ".codex-room-backups")
 
@@ -610,7 +623,7 @@ def check_runtime_obstacles(home: Path) -> None:
                 path = role_root / name
                 if path.is_symlink() or (path.exists() and not path.is_file()):
                     fail(f"managed runtime output is an unsafe obstacle: {path}")
-            for name in ROLE_SHARED:
+            for name in shared_resources(home):
                 path = role_root / name
                 expected = home / ".codex" / name
                 if path.exists() or path.is_symlink():
@@ -638,12 +651,13 @@ def check_operator_codex(home: Path) -> None:
     codex = home / ".codex"
     if codex.is_symlink() or not codex.is_dir():
         fail(f"operator Codex home is missing or redirected: {codex}")
-    for name in ("config.toml",) + ROLE_SHARED:
+    for name in ("config.toml",) + ROLE_SHARED_REQUIRED:
         path = codex / name
         if not path.exists() and not path.is_symlink():
             fail(f"operator Codex prerequisite is missing: {path}")
         if path.is_symlink() and not path.exists():
             fail(f"operator Codex prerequisite is a dangling link: {path}")
+    shared_resources(home)
 
 
 def git_read(repo: Path, *args: str) -> str:
@@ -763,7 +777,7 @@ def setup_stage_canonical(stage: Path, home: Path) -> Path:
     operator = home / ".codex"
     # Symlinks keep operator credentials and private resources out of staging
     # and make it impossible for the installer to accidentally export them.
-    for name in ("config.toml",) + ROLE_SHARED:
+    for name in ("config.toml",) + shared_resources(home):
         (canonical / name).symlink_to(operator / name)
     render_source(safe_read_source(".config/codex-room/model-instructions.md"), home, canonical / "model-instructions.md")
     for role in ROLES:
@@ -807,7 +821,7 @@ def generate_role_stage(stage: Path, home: Path) -> dict[str, list[tuple[Path, s
             (config, "file", config, 0o600),
             (catalog, "file", catalog, 0o600),
         ]
-        for name in ROLE_SHARED:
+        for name in shared_resources(home):
             outputs[role].append((operator / name, "link", operator / name, 0o777))
         for name in ROOM_SHARED:
             outputs[role].append((room_config, "link", room_config, 0o777))

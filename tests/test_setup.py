@@ -816,15 +816,15 @@ class PublicInstallTransactionTests(unittest.TestCase):
         self.assertFalse((self.home / "projects").exists())
 
     def test_missing_resource_and_bad_catalog_fail_during_staging(self) -> None:
-        hooks = self.home / ".codex/hooks.json"
-        hooks.unlink()
+        auth = self.home / ".codex/auth.json"
+        auth.unlink()
         paseo = self.make_fake_paseo()
         verifier = self.make_fake_verifier()
         missing = self.run_install(("--apply",), self.lifecycle_env(paseo, verifier))
         self.assertNotEqual(missing.returncode, 0)
         self.assertFalse((self.home / "projects").exists())
 
-        hooks.write_text("operator\n")
+        auth.write_text("operator\n")
         bad_catalog = self.root / "bad-catalog.json"
         bad_catalog.write_text('{"models": []}\n')
         failed = self.run_install(
@@ -833,6 +833,47 @@ class PublicInstallTransactionTests(unittest.TestCase):
         )
         self.assertNotEqual(failed.returncode, 0)
         self.assertFalse((self.home / "projects").exists())
+
+    def test_optional_hooks_absent_then_added_support_public_install_and_sync(self) -> None:
+        hooks = self.home / ".codex/hooks.json"
+        hooks.unlink()
+        env = self.lifecycle_env(self.make_fake_paseo(), self.make_fake_verifier())
+        before = self.tree_snapshot(self.home)
+        planned = self.run_install((), env)
+        self.assertEqual(planned.returncode, 0, planned.stdout + planned.stderr)
+        self.assertEqual(self.tree_snapshot(self.home), before)
+        operator_before = self.tree_snapshot(self.home / ".codex")
+        for _ in range(2):
+            result = self.run_install(("--apply",), env)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        for role in ("supervisor", "lead", "peer"):
+            runtime_hooks = self.home / ".codex-runtime" / role / "hooks.json"
+            result = subprocess.run(
+                [str(self.home / ".local/bin/codex-room-sync"), role],
+                env=env, capture_output=True, text=True,
+            )
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertFalse(runtime_hooks.exists() or runtime_hooks.is_symlink())
+        self.assertEqual(self.tree_snapshot(self.home / ".codex"), operator_before)
+        hooks.write_text('{"hooks": {}}\n')
+        result = self.run_install(("--apply",), env)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        for role in ("supervisor", "lead", "peer"):
+            runtime_hooks = self.home / ".codex-runtime" / role / "hooks.json"
+            self.assertTrue(runtime_hooks.is_symlink())
+            self.assertEqual(runtime_hooks.resolve(), hooks.resolve())
+
+    def test_optional_hooks_dangling_link_fails_without_mutation(self) -> None:
+        hooks = self.home / ".codex/hooks.json"
+        hooks.unlink()
+        hooks.symlink_to(self.home / "missing-hooks.json")
+        env = self.lifecycle_env(self.make_fake_paseo(), self.make_fake_verifier())
+        before = self.tree_snapshot(self.home)
+        for args in ((), ("--apply",)):
+            result = self.run_install(args, env)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("dangling link", result.stderr)
+            self.assertEqual(self.tree_snapshot(self.home), before)
 
     def test_redirected_active_runtime_role_fails_before_publication(self) -> None:
         redirected = self.root / "redirected-lead"
