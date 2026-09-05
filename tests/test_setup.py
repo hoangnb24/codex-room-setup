@@ -531,12 +531,9 @@ class SetupShapeTests(unittest.TestCase):
                 " case \"$2\" in \"$PASEO_REPO_DIR\") echo 8511089eaeb06cddd049b629562926822020de5c ;; *) exec /usr/bin/git \"$@\" ;; esac\n"
                 "else exec /usr/bin/git \"$@\"; fi\n"
             )
-            toml_python = "/opt/homebrew/opt/python@3.12/libexec/bin/python3"
-            if not Path(toml_python).is_file():
-                toml_python = sys.executable
             env = os.environ.copy(); env.update({
                 "HOME": str(home), "PASEO_REPO_DIR": str(paseo), "OCR_LOG": str(root / "ocr.log"),
-                "CODEX_ROOM_TOML_PYTHON": toml_python,
+                "CODEX_ROOM_TOML_PYTHON": os.environ.get("CODEX_ROOM_TOML_PYTHON", sys.executable),
                 "PATH": str(bin_dir) + os.pathsep + env["PATH"],
             })
             completed = subprocess.run([str(ROOT / "scripts/verify")], env=env, capture_output=True, text=True)
