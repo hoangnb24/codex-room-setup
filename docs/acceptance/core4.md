@@ -42,8 +42,8 @@ daemon, manage operator credentials, or install Desktop GUI state.
 | --- | --- | --- |
 | CORE-2 operating contract | [CORE-2](https://github.com/hoangnb24/codex-room-setup/issues/4) | Technically accepted; Human check deferred |
 | CORE-3 public transaction | [CORE-3 handoff](https://github.com/hoangnb24/codex-room-setup/issues/5#issuecomment-5550376777) | Technically accepted; independent F1–F6 closeout passed |
-| Role/provider source contract | `./scripts/verify --source` and unit tests | Writer validation recorded below |
-| Public installer composition | `make test` and `make test-container` | Lead owns the final clean-clone/container run |
+| Role/provider source contract | `./scripts/verify --source` and unit tests | Passed in the writer workspace, clean clone, and container source check |
+| Public installer composition | `make test` and `make test-container` | 49 tests and complete container acceptance passed |
 | Live Paseo roles and tool inventory | `./install --verify` plus three smoke sessions | Pending the single Human review |
 
 The final candidate is identified by the immutable branch/PR and issue proof
@@ -65,28 +65,62 @@ git diff --check: OK
 
 The complete unit output is retained at
 `/tmp/codex-room-core4-tests.log`; source verification output is at
-`/tmp/codex-room-core4-source.log`. The expensive clean-clone/container run is
-reserved for Lead and is recorded below after immutable candidate proof.
+`/tmp/codex-room-core4-source.log`. Lead's independent proof follows.
 
 ## Final clean-clone proof
 
-Lead records the immutable candidate reference and output from these commands
-after the independent closeout review:
+On 2026-09-05, Lead tested implementation commit
+`f9a56017e0622158b6791355af1dc4dc181ee7df` in a separate clean clone.
+The only subsequent change is this evidence record. Independent CORE-4
+review found no functional blocker; CORE-3's six transaction findings had
+already passed their independent closeout.
 
 ```text
-make test
-make test-container
-./scripts/verify --source
-git diff --check
+make test: 49 tests passed (114.647 seconds)
+./scripts/verify --source: VERIFY_OK
+Python compilation, shell syntax, git diff --check: passed
+PUBLIC_PLAN_READ_ONLY_OK
+PUBLIC_INSTALL_PASS fresh
+PUBLIC_INSTALL_PASS repeated
+PUBLIC_VERIFY_FIXTURE_OK live_inventory_is_fake
+ROLE_INVENTORY ["codex-lead","codex-peer","codex-supervisor"]
+MCP_RECIPIENTS ["codex-supervisor","codex-lead"]
+CONTAINER_ACCEPTANCE_OK node=v22.16.0 python=3.11.2 paseo=8511089eaeb06cddd049b629562926822020de5c
 ```
 
-The final clean-clone/container result is intentionally left for Lead to
-append with the GitHub issue/PR evidence. This writer did not run the expensive
-final container acceptance.
+The first `make test-container` attempt passed fresh installation but failed
+with npm `ECONNRESET` during repeated-install preflight. An unchanged rerun
+completed successfully. Both logs are retained; the failed attempt is not
+counted as a full pass. Source verification also passed through a separate
+read-only invocation inside the first container.
+
+The composed test checks plan bytes/modes/links, fresh and repeated install,
+operator and legacy/active JSONL/SQLite preservation, customized obsolete
+files, final backup directory permissions, and installed/provider verification.
+Regular managed/CLI backup permissions and intentional rollback failures are
+covered by the transaction regressions. A supplementary read-only check during
+the successful container's repeated-install phase found all 136,175 completed
+regular backup files at mode `0600`; final directory modes are checked after
+apply. This supplementary check is separate from the committed container test.
+
+The coordination session retains `unit.log`, `source.log`, `container.log`,
+`container-retry.log`, `container-source.log`, the backup-file permission result,
+full generated instructions, and changed-path manifests. The final immutable
+handoff and review status are recorded on
+[CORE-4](https://github.com/hoangnb24/codex-room-setup/issues/6).
 
 ## Consolidated Human runbook
 
-Use a clean clone at the final candidate, a disposable operator home, and an
+Before merge, select the candidate branch explicitly: README's default clone
+still selects `main` until this PR is merged.
+
+```bash
+git clone --branch core-minimum https://github.com/hoangnb24/codex-room-setup.git
+cd codex-room-setup
+git rev-parse HEAD   # compare with the final commit recorded on the PR/CORE-4
+```
+
+Use this clean clone at the recorded candidate, a disposable operator home, and an
 authenticated Codex/Paseo environment prepared by the operator. Follow only
 the README for installation, then record commands and observations on
 [CORE-4](https://github.com/hoangnb24/codex-room-setup/issues/6):
