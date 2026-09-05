@@ -1121,6 +1121,59 @@ class PublicInstallTransactionTests(unittest.TestCase):
                 self.assertFalse((self.home / ".paseo").exists())
                 self.assertFalse((self.home / "projects").exists())
 
+    def test_overridden_roots_reserve_canonical_roots_and_managed_targets(self) -> None:
+        paseo = self.make_fake_paseo()
+        verifier = self.make_fake_verifier()
+        base = self.lifecycle_env(paseo, verifier)
+        before = self.tree_snapshot(self.home)
+        custom_runtime = (self.root / "custom-runtime").resolve()
+        custom_backup = (self.root / "custom-backups").resolve()
+        failures = (
+            {
+                "CODEX_ROOM_RUNTIME_ROOT": str(custom_runtime),
+                "PASEO_REPO_DIR": str(self.home / ".codex-runtime/paseo"),
+            },
+            {
+                "CODEX_ROOM_BACKUP_ROOT": str(custom_backup),
+                "PASEO_REPO_DIR": str(self.home / ".codex-room-backups/paseo"),
+            },
+            {
+                "CODEX_ROOM_BACKUP_ROOT": str(self.home / ".config/codex-room/model-instructions.md"),
+            },
+        )
+        for override in failures:
+            with self.subTest(override=override):
+                failed = self.run_install(("--apply",), {**base, **override})
+                self.assertNotEqual(failed.returncode, 0, failed.stdout + failed.stderr)
+                self.assertEqual(self.tree_snapshot(self.home), before)
+                self.assertFalse(custom_runtime.exists())
+                self.assertFalse(custom_backup.exists())
+
+    def test_disjoint_runtime_and_backup_overrides_remain_supported(self) -> None:
+        paseo = self.make_fake_paseo()
+        verifier = self.executable(
+            self.root / "custom-verify",
+            "#!/bin/sh\n"
+            "set -eu\n"
+            "test -f \"$HOME/.paseo/config.json\"\n"
+            "for role in supervisor lead peer; do\n"
+            "  test -f \"$CODEX_ROOM_RUNTIME_ROOT/$role/config.toml\"\n"
+            "done\n",
+        )
+        runtime = (self.root / "custom-runtime").resolve()
+        backup = (self.root / "custom-backups").resolve()
+        env = {
+            **self.lifecycle_env(paseo, verifier),
+            "CODEX_ROOM_RUNTIME_ROOT": str(runtime),
+            "CODEX_ROOM_BACKUP_ROOT": str(backup),
+        }
+        completed = self.run_install(("--apply",), env)
+        self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+        self.assertTrue((runtime / "supervisor/config.toml").is_file())
+        self.assertTrue((runtime / "lead/config.toml").is_file())
+        self.assertTrue((runtime / "peer/config.toml").is_file())
+        self.assertEqual(backup.stat().st_mode & 0o777, 0o700)
+
     def test_rendered_historical_phase2_files_are_retired(self) -> None:
         for name in ("coexist", "hard-cut"):
             source = ROOT / "paseo/legacy" / f"paseo.phase2-{name}.candidate.json.template"

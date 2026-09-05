@@ -546,10 +546,13 @@ def check_configured_path_safety(paths: dict[str, Path | str], home: Path) -> No
     assert isinstance(target, Path) and isinstance(cli, Path)
     runtime_root = runtime_path(home)
     backup_root = backup_base_path(home)
+    canonical_runtime_root = home / ".codex-runtime"
+    canonical_backup_root = home / ".codex-room-backups"
 
     # These roots contain credentials, active sessions, or transaction
     # snapshots. A path override never grants permission to replace one.
-    protected = [home / ".codex", runtime_root, backup_root]
+    protected_defaults = [home / ".codex", canonical_runtime_root, canonical_backup_root]
+    protected = protected_defaults + [runtime_root, backup_root]
     managed_paths = [home / relative for _, relative, _ in MANAGED_FILES]
     managed_paths.extend(home / relative for relative in OBSOLETE_HASHES)
     managed_paths.extend(home / relative for relative in OBSOLETE_TEMPLATES)
@@ -559,6 +562,25 @@ def check_configured_path_safety(paths: dict[str, Path | str], home: Path) -> No
         fail(f"transaction backup root is a redirecting link: {backup_root}")
     if backup_root.exists() and not backup_root.is_dir():
         fail(f"transaction backup root is not a directory: {backup_root}")
+
+    configured_roots = (
+        (runtime_root, "runtime root", canonical_runtime_root),
+        (backup_root, "transaction backup root", canonical_backup_root),
+    )
+    for root, label, canonical in configured_roots:
+        for protected_path in protected_defaults:
+            # The ordinary default root is the one permitted reservation for
+            # its corresponding configured root. All cross-root aliases,
+            # including aliases introduced by an override, are rejected.
+            if root == canonical and protected_path == canonical:
+                continue
+            if any_form_overlaps(root, protected_path):
+                fail(f"{label} overlaps protected operator state: {root} / {protected_path}")
+        for managed_path in managed_paths:
+            if any_form_overlaps(root, managed_path):
+                fail(f"{label} overlaps a managed room target: {root} / {managed_path}")
+    if any_form_overlaps(runtime_root, backup_root):
+        fail(f"runtime root and transaction backup root overlap: {runtime_root} / {backup_root}")
 
     for candidate, label in ((target, "Paseo checkout"), (cli, "Paseo CLI link")):
         check_direct_parents(candidate.parent)
@@ -571,10 +593,6 @@ def check_configured_path_safety(paths: dict[str, Path | str], home: Path) -> No
 
     if lexical_overlap(target, cli):
         fail(f"Paseo checkout and CLI link overlap: {target} / {cli}")
-    if lexical_overlap(runtime_root, backup_root):
-        fail(f"runtime root and transaction backup root overlap: {runtime_root} / {backup_root}")
-    if any_form_overlaps(runtime_root, home / ".codex") or any_form_overlaps(backup_root, home / ".codex"):
-        fail("runtime or transaction backup root overlaps operator .codex state")
 
 
 def check_runtime_obstacles(home: Path) -> None:
