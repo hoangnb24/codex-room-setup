@@ -22,7 +22,7 @@ The `home/` directory mirrors `$HOME`:
 | `home/.local/bin/codex-room*` | `~/.local/bin/` |
 | `home/.paseo/config.json.template` | `~/.paseo/config.json` |
 
-`scripts/install-paseo-fork` also creates this checkout-aware symlink:
+The public installer creates this checkout-aware symlink:
 
 ```text
 ~/.local/bin/paseo
@@ -35,12 +35,15 @@ The `home/` directory mirrors `$HOME`:
 
 Prerequisites:
 
-- macOS or a Unix-like environment with Bash, Python 3.11, Git, Node, npm, and jq.
-- Codex installed and authenticated.
+- macOS or another Unix-like environment with Bash, Python 3.11 or newer,
+  Git, Node 22, npm, and jq.
+- Codex CLI installed and authenticated, with an existing `~/.codex/config.toml`,
+  `auth.json`, `AGENTS.md`, `hooks.json`, `skills/`, and `plugins/` available
+  for runtime sharing.
 - `~/.local/bin` on `PATH`.
 
 ```bash
-git clone <this-repository-url> codex-room-setup
+git clone https://github.com/hoangnb24/codex-room-setup.git codex-room-setup
 cd codex-room-setup
 
 ./install                         # read-only plan and prerequisite check
@@ -52,10 +55,21 @@ The root command preflights the pinned Paseo checkout, renders managed HOME
 files, stages all three role runtimes, and publishes the complete transition
 with rollback on a dependency, generation, or final verification failure. It
 does not install or authenticate Codex, touch `~/.codex`, start a daemon, or
-build Paseo Desktop. `./install --verify` is read-only and fails when the live
-Paseo provider inventory cannot be reached; use `scripts/verify` for an
-installed-only diagnostic. The lower-level scripts remain available for
-targeted maintenance and are not the normal fresh-install lifecycle.
+build Paseo Desktop. Start and reach the local provider daemon explicitly
+before live verification:
+
+```bash
+paseo daemon start
+paseo daemon status
+./install --verify
+```
+
+`./install --verify` is read-only and fails when the live Paseo provider
+inventory cannot be reached. Use `scripts/verify` for an installed-only
+diagnostic while the daemon is stopped. Repeating `./install --apply` is the
+upgrade path: it regenerates the three managed runtimes, preserves operator
+Codex files and existing runtime/session data, and retires only recognized,
+unchanged legacy artifacts.
 
 ## Disposable container acceptance test
 
@@ -122,15 +136,19 @@ restarts Paseo.
 | Supervisor | `gpt-5.6-sol` | medium | yes |
 | Lead | `gpt-5.6-sol` | medium | yes |
 | Peer | `gpt-5.6-sol` | medium | no |
-Lead may request a fresh read-only Peer review when independent judgment can
-change a technical decision. All role overlays currently request `danger-full-access` with
-`approval_policy = "never"`. Read
+Human retains product, cost, external-effect, and irreversible-risk decisions.
+Supervisor routes Human intent and bounded recovery. Lead owns technical
+framing, dependency order, verification, and explicit candidate acceptance.
+Peer owns one bounded outcome and returns an immutable candidate or a concrete
+block signal. Lead may request a fresh read-only Peer review when independent
+judgment can change a technical decision. All role overlays currently request
+`danger-full-access` with `approval_policy = "never"`. Read
 [docs/architecture.md](docs/architecture.md) before changing these boundaries.
 
 ## Common operations
 
 ```bash
-# Regenerate all role runtimes after changing an overlay
+# Lower-level maintenance: regenerate all role runtimes after changing an overlay
 ./scripts/sync-all
 
 # Validate source only, without requiring installed runtimes
@@ -139,17 +157,16 @@ change a technical decision. All role overlays currently request `danger-full-ac
 # Verify installed state and the live Paseo provider inventory
 ./install --verify
 
-# Export sanitized runtime summaries for local comparison
+# Optional sanitized runtime summaries for local comparison
 ./scripts/export-runtime-snapshots
-
-# Summarize one Codex rollout session for benchmarking
-./scripts/session-usage --role peer --session-id SESSION_ID
 
 ```
 
-See [docs/session-usage-benchmark.md](docs/session-usage-benchmark.md) for token,
-request, tool-call, timing, and API-equivalent cost definitions.
-See [docs/operations.md](docs/operations.md) for the single-writer handoff,
-candidate acceptance, and maintenance runbooks.
+The lower-level scripts are maintenance interfaces used by the public
+lifecycle and are not alternate fresh-install commands. See
+[docs/operations.md](docs/operations.md) for the single-writer handoff,
+candidate acceptance, and maintenance runbooks. The composed evidence and
+single final Human runbook are in
+[docs/acceptance/core4.md](docs/acceptance/core4.md).
 
 Official Codex configuration precedence is documented by OpenAI in the [Codex config basics](https://learn.chatgpt.com/docs/config-file/config-basic.md). `codex-room` uses a separate `CODEX_HOME` per role; this is a local orchestration layer, not a replacement for the operator's Codex installation.

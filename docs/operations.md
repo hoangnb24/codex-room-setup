@@ -1,12 +1,17 @@
 # Operations
 
+The public lifecycle is `./install`, `./install --apply`, then an explicit
+Paseo daemon start followed by `./install --verify`. The other scripts in this
+repository are focused maintenance interfaces used after that installation;
+they are not alternate fresh-install workflows.
+
 ## Change a role
 
 1. Edit `home/.config/codex-room/overlays/<role>.config.toml`.
 2. Run `make test` and `./scripts/verify --source`.
 3. Run `./install` to inspect the complete read-only plan.
 4. Run `./install --apply` to publish the changed source transactionally.
-5. Run `./install --verify` when the Paseo daemon is available.
+5. Start Paseo when no agent turn is active, then run `./install --verify`.
 
 The three roles have distinct authority. Human keeps product, cost, external
 effect, and irreversible-risk decisions. Supervisor observes and routes Human

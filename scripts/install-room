@@ -1011,7 +1011,7 @@ def stage_home(stage: Path, home: Path) -> dict[str, Path]:
 def print_plan(home: Path) -> int:
     manifest = parse_manifest()
     paths = configured_paths(home, manifest)
-    out("CORE-3 INSTALL PLAN (read-only; no filesystem publication)")
+    out("CODEX ROOM INSTALL PLAN (read-only; no filesystem publication)")
     out(f"PREFLIGHT  Paseo {paths['commit']} from {paths['fork']}")
     out(f"PASEO     checkout {paths['paseo_target']}")
     out(f"PASEO     CLI link {paths['paseo_cli']}")
@@ -1159,7 +1159,7 @@ def apply_install(home: Path) -> int:
                     fail(f"final installed verification failed with status {completed.returncode}")
             assert transaction is not None
             restrict_tree(transaction.root)
-            out(f"CORE3_APPLY_OK backup={transaction.root}")
+            out(f"CODEX_ROOM_APPLY_OK backup={transaction.root}")
             return 0
         except (InstallError, OSError, subprocess.CalledProcessError) as error:
             if transaction is not None:

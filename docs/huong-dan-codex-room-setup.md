@@ -39,6 +39,11 @@ một Peer mới ở chế độ chỉ đọc để xem đúng candidate hoặc 
 
 ## Cài đặt và sinh runtime
 
+Luồng public duy nhất là `./install` để xem kế hoạch, `./install --apply` để
+cài đặt, sau đó operator khởi động Paseo và chạy `./install --verify`. Các
+script thấp hơn chỉ dành cho bảo trì có mục tiêu, không phải một đường cài đặt
+thay thế.
+
 `home/` là bản mirror của `$HOME`. `./install --apply` cài overlay, chỉ
 dẫn chung, workspace protocol, launcher, và cấu hình Paseo. Script không ghi
 vào `~/.codex`.

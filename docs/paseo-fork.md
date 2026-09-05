@@ -1,5 +1,9 @@
 # Paseo fork
 
+The public `./install --apply` lifecycle owns the Paseo checkout transition.
+The helper described below is an internal maintenance boundary used by that
+transaction and by focused operator repairs.
+
 The source of truth for fork provenance is [`paseo/source.toml`](../paseo/source.toml). The expected checkout is:
 
 ```text

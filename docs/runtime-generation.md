@@ -14,4 +14,9 @@ agents. Paseo therefore owns exactly the supervisor/lead/peer topology. The
 generator never prunes sibling directories or private files, so existing
 operator state remains outside the active lifecycle.
 
+`WORKSPACE_PROTOCOL.md` is an installed reference under
+`~/.config/codex-room/workflow/`; it is not copied into each generated
+runtime. The generated role instructions carry the authority boundary, while
+the workspace protocol remains available to the operator and workspace.
+
 Runtime snapshots in this repository are optional sanitized audit output. They are ignored by default and are not installation inputs.

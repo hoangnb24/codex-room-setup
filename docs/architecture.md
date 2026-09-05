@@ -42,8 +42,9 @@ For a role, the sync script:
 Supervisor, Lead, and Peer retain a canonical
 `plugins -> ~/.codex/plugins` symlink. Existing additional runtime directories
 and private workflow files are not generated, inspected, migrated, or removed.
-The launcher resolves evidence homes read-only with
-`codex-room --resolve-evidence-home <role>` and does not sync on that route.
+The launcher has one public route: it accepts one of the three retained roles,
+regenerates that role's runtime, and starts Codex with its isolated
+`CODEX_HOME`.
 
 The retained `WORKSPACE_PROTOCOL.md` is not linked into role runtimes. Each
 workspace can provide its own `docs/WORKSPACE_PROTOCOL.md`.

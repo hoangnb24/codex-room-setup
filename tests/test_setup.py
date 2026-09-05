@@ -20,7 +20,6 @@ PASEO_TEMPLATE = HOME_MIRROR / ".paseo" / "config.json.template"
 SYNC = HOME_MIRROR / ".local" / "bin" / "codex-room-sync"
 LAUNCHER = HOME_MIRROR / ".local" / "bin" / "codex-room"
 SYNC_ALL = ROOT / "scripts" / "sync-all"
-SESSION_USAGE = ROOT / "scripts" / "session-usage"
 
 
 class SetupShapeTests(unittest.TestCase):
@@ -236,36 +235,6 @@ class SetupShapeTests(unittest.TestCase):
             self.assertEqual(snapshot(codex_home), codex_before)
             self.assertEqual(snapshot(runtime_root), legacy_before)
             self.assertTrue(all(not (fake_home / relative).exists() for relative in obsolete))
-
-    def test_bootstrap_core_path_does_not_require_ocr_or_harness(self) -> None:
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            bin_dir = root / "bin"
-            log = root / "actions.log"
-            component = self.executable(
-                bin_dir / "component",
-                "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$ACTION_LOG\"\n",
-            )
-            for command_name in ("codex", "git", "jq", "node", "npm", "python3"):
-                self.executable(bin_dir / command_name, "#!/bin/sh\nexit 0\n")
-            env = {
-                **os.environ,
-                "HOME": str(root / "home"),
-                "PATH": str(bin_dir) + ":/usr/bin:/bin",
-                "ACTION_LOG": str(log),
-                "PASEO_INSTALL_BIN": str(component),
-                "CODEX_ROOM_INSTALL_BIN": str(component),
-                "CODEX_ROOM_SYNC_ALL_BIN": str(component),
-                "CODEX_ROOM_VERIFY_BIN": str(component),
-            }
-            completed = subprocess.run(
-                [str(ROOT / "scripts/bootstrap"), "--apply"],
-                env=env, capture_output=True, text=True,
-            )
-            self.assertEqual(completed.returncode, 0, completed.stderr)
-            self.assertEqual(log.read_text().splitlines(), ["--preflight", "--apply", "", "", ""])
-            self.assertNotIn("ocr", completed.stdout + completed.stderr)
-            self.assertNotIn("harness", completed.stdout.lower() + completed.stderr.lower())
 
     def test_paseo_fresh_install_is_exact_and_atomic(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -639,93 +608,16 @@ class SetupShapeTests(unittest.TestCase):
                 self.assertNotEqual(rejected.returncode, 0)
                 self.assertIn(f"unknown role: {legacy_role}", rejected.stderr)
 
-    def test_launcher_resolves_only_a_direct_role_home_without_sync(self) -> None:
-        with tempfile.TemporaryDirectory() as temporary:
-            runtime_root = Path(temporary) / "runtime"
-            lead_home = runtime_root / "lead"
-            lead_home.mkdir(parents=True)
-            env = os.environ.copy()
-            env.update(
-                {
-                    "CODEX_ROOM_RUNTIME_ROOT": str(runtime_root),
-                    "CODEX_ROOM_SYNC_BIN": str(Path(temporary) / "must-not-run"),
-                }
-            )
-
-            completed = subprocess.run(
-                [str(LAUNCHER), "--resolve-evidence-home", "lead"],
-                check=True,
-                env=env,
-                capture_output=True,
-                text=True,
-            )
-
-            self.assertEqual(completed.stdout.strip(), str(lead_home.resolve()))
-
-    def test_launcher_rejects_redirected_evidence_role_home(self) -> None:
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            runtime_root = root / "runtime"
-            runtime_root.mkdir()
-            redirected = root / "redirected-lead"
-            redirected.mkdir()
-            (runtime_root / "lead").symlink_to(redirected, target_is_directory=True)
-            env = os.environ.copy()
-            env["CODEX_ROOM_RUNTIME_ROOT"] = str(runtime_root)
-
-            completed = subprocess.run(
-                [str(LAUNCHER), "--resolve-evidence-home", "lead"],
-                check=False,
-                env=env,
-                capture_output=True,
-                text=True,
-            )
-
-            self.assertNotEqual(completed.returncode, 0)
-            self.assertIn("must not be a symlink", completed.stderr)
-
-    def test_launcher_rejects_legacy_roles_on_both_routes(self) -> None:
+    def test_launcher_rejects_legacy_roles(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             env = {**os.environ, "CODEX_ROOM_RUNTIME_ROOT": str(Path(temporary) / "runtime")}
-            for arguments in (("review",), ("harness",), ("--resolve-evidence-home", "review"), ("--resolve-evidence-home", "harness")):
+            for arguments in (("review",), ("harness",)):
                 with self.subTest(arguments=arguments):
                     completed = subprocess.run(
                         [str(LAUNCHER), *arguments], env=env, capture_output=True, text=True
                     )
                     self.assertEqual(completed.returncode, 2)
                     self.assertIn("unknown", completed.stderr)
-
-    def test_session_usage_reports_requests_tools_tokens_and_cost(self) -> None:
-        fixture = ROOT / "tests" / "fixtures" / "session-usage.jsonl"
-        completed = subprocess.run(
-            [
-                str(SESSION_USAGE),
-                "--format",
-                "json",
-                "--input-rate",
-                "5",
-                "--cached-input-rate",
-                "0.5",
-                "--output-rate",
-                "30",
-                str(fixture),
-            ],
-            check=True,
-            capture_output=True,
-            text=True,
-        )
-        summary = json.loads(completed.stdout)
-
-        self.assertEqual(summary["session_id"], "fixture-session")
-        self.assertEqual(summary["timing"]["duration_ms"], 5000)
-        self.assertEqual(summary["model_requests"], 2)
-        self.assertEqual(summary["tools"]["invocations"], 2)
-        self.assertEqual(summary["usage"]["cumulative"]["total_tokens"], 2800)
-        self.assertEqual(
-            summary["usage"]["final_request"]["context_window_used_tokens"],
-            1700,
-        )
-        self.assertAlmostEqual(summary["estimated_api_cost_usd"], 0.017)
 
     def test_minimum_role_contracts_have_capabilities_without_pilot_ceremony(self) -> None:
         protocol = (ROOM / "workflow" / "WORKSPACE_PROTOCOL.md").read_text()

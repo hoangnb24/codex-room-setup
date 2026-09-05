@@ -18,6 +18,51 @@ rejects() {
   return 0
 }
 
+snapshot_tree() {
+  python3 - "$1" <<'PY'
+import hashlib
+import os
+from pathlib import Path
+import stat
+import sys
+
+root = Path(sys.argv[1])
+if not root.exists() and not root.is_symlink():
+    print("MISSING")
+    raise SystemExit(0)
+
+paths = [root]
+for current, directories, files in os.walk(root, followlinks=False):
+    paths.extend(Path(current) / name for name in directories)
+    paths.extend(Path(current) / name for name in files)
+for path in sorted(paths, key=lambda item: str(item)):
+    relative = "." if path == root else str(path.relative_to(root))
+    mode = stat.S_IMODE(os.lstat(path).st_mode)
+    if path.is_symlink():
+        detail = f"link:{os.readlink(path)}"
+    elif path.is_file():
+        detail = f"file:{hashlib.sha256(path.read_bytes()).hexdigest()}"
+    elif path.is_dir():
+        detail = "dir"
+    else:
+        detail = f"other:{os.lstat(path).st_mode:o}"
+    print(f"{relative}\t{mode:04o}\t{detail}")
+PY
+}
+
+make_sqlite_marker() {
+  python3 - "$1" "$2" <<'PY'
+import sqlite3
+from pathlib import Path
+import sys
+
+database, marker = map(Path, sys.argv[1:])
+with sqlite3.connect(database) as connection:
+    connection.execute("CREATE TABLE marker (value TEXT NOT NULL)")
+    connection.execute("INSERT INTO marker(value) VALUES (?)", (str(marker),))
+PY
+}
+
 [[ "$(node --version)" == v22.* ]] || fail "container must provide Node 22"
 [[ "$(python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')" == 3.11 ]] || fail "container must provide Python 3.11"
 [[ -f "$fixture" ]] || fail "model catalog fixture is missing"
@@ -27,8 +72,9 @@ mkdir -p \
   "$fake_bin" \
   "$fake_home/.codex/plugins" \
   "$fake_home/.codex/skills" \
-  "$fake_home/.codex-runtime/review" \
-  "$fake_home/.codex-runtime/harness"
+  "$fake_home/.config/codex-room/overlays" \
+  "$fake_home/.codex-runtime/review/sessions" \
+  "$fake_home/.codex-runtime/harness/sessions"
 
 cat >"$fake_bin/codex" <<'EOF'
 #!/bin/sh
@@ -58,6 +104,17 @@ trap restore_https EXIT
 EOF
 chmod 0755 "$fake_bin/verify-installed"
 
+cat >"$fake_bin/paseo-live" <<'EOF'
+#!/bin/sh
+set -eu
+if [ "${1:-}" = provider ] && [ "${2:-}" = ls ]; then
+  printf '%s\n' '[{"provider":"codex-lead"},{"provider":"codex-peer"},{"provider":"codex-supervisor"}]'
+  exit 0
+fi
+exit 1
+EOF
+chmod 0755 "$fake_bin/paseo-live"
+
 cat >"$fake_home/.codex/config.toml" <<'EOF'
 model = "operator-model"
 
@@ -71,6 +128,16 @@ printf '%s\n' 'operator-plugin-marker' >"$fake_home/.codex/plugins/operator.mark
 printf '%s\n' 'operator-skill-marker' >"$fake_home/.codex/skills/operator.marker"
 printf '%s\n' 'legacy-review-runtime-marker' >"$fake_home/.codex-runtime/review/operator.marker"
 printf '%s\n' 'legacy-harness-runtime-marker' >"$fake_home/.codex-runtime/harness/operator.marker"
+printf '%s\n' '{"session":"legacy-review"}' >"$fake_home/.codex-runtime/review/sessions/private.jsonl"
+printf '%s\n' '{"session":"legacy-harness"}' >"$fake_home/.codex-runtime/harness/sessions/private.jsonl"
+make_sqlite_marker "$fake_home/.codex-runtime/review/state.sqlite" legacy-review
+make_sqlite_marker "$fake_home/.codex-runtime/harness/state.sqlite" legacy-harness
+printf '%s\n' 'operator-customized review notes' \
+  >"$fake_home/.config/codex-room/overlays/review.config.toml"
+
+before_plan=$(mktemp "$acceptance_root/plan-before.XXXXXX")
+after_plan=$(mktemp "$acceptance_root/plan-after.XXXXXX")
+snapshot_tree "$fake_home" >"$before_plan"
 
 preserved_markers=(
   "$fake_home/.codex/config.toml"
@@ -81,8 +148,11 @@ preserved_markers=(
   "$fake_home/.codex/skills/operator.marker"
   "$fake_home/.codex-runtime/review/operator.marker"
   "$fake_home/.codex-runtime/harness/operator.marker"
+  "$fake_home/.codex-runtime/review/sessions/private.jsonl"
+  "$fake_home/.codex-runtime/review/state.sqlite"
+  "$fake_home/.codex-runtime/harness/sessions/private.jsonl"
+  "$fake_home/.codex-runtime/harness/state.sqlite"
 )
-before_hashes=$(sha256sum "${preserved_markers[@]}")
 
 export HOME="$fake_home"
 export PATH="$fake_bin:$fake_home/.local/bin:$PATH"
@@ -98,14 +168,43 @@ export ELECTRON_SKIP_BINARY_DOWNLOAD=1
 export PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
 
 "$source_root/install"
+snapshot_tree "$fake_home" >"$after_plan"
+cmp "$before_plan" "$after_plan" || fail "default plan changed the disposable home"
+printf 'PUBLIC_PLAN_READ_ONLY_OK\n'
 
-for pass in fresh repeated; do
-  "$source_root/install" --apply
-  printf 'PUBLIC_INSTALL_PASS %s\n' "$pass"
+before_first_hashes=$(sha256sum "${preserved_markers[@]}")
+"$source_root/install" --apply
+printf 'PUBLIC_INSTALL_PASS fresh\n'
+after_first_hashes=$(sha256sum "${preserved_markers[@]}")
+[[ "$after_first_hashes" == "$before_first_hashes" ]] || fail "fresh apply changed operator or legacy marker bytes"
+
+for role in supervisor lead peer; do
+  mkdir -p "$fake_home/.codex-runtime/$role/sessions"
+  printf '%s\n' "{\"session\":\"active-$role\"}" \
+    >"$fake_home/.codex-runtime/$role/sessions/live.jsonl"
+  make_sqlite_marker "$fake_home/.codex-runtime/$role/state.sqlite" "active-$role"
+  preserved_markers+=(
+    "$fake_home/.codex-runtime/$role/sessions/live.jsonl"
+    "$fake_home/.codex-runtime/$role/state.sqlite"
+  )
 done
+before_repeat_hashes=$(sha256sum "${preserved_markers[@]}")
+
+"$source_root/install" --apply
+printf 'PUBLIC_INSTALL_PASS repeated\n'
 
 after_hashes=$(sha256sum "${preserved_markers[@]}")
-[[ "$after_hashes" == "$before_hashes" ]] || fail "operator or legacy marker bytes changed"
+[[ "$after_hashes" == "$before_repeat_hashes" ]] || fail "operator or session marker bytes changed"
+
+backup_root="$fake_home/.codex-room-backups"
+[[ "$(stat -c '%a' "$backup_root")" == 700 ]] || fail "backup root is not owner-only"
+while IFS= read -r backup_directory; do
+  [[ "$(stat -c '%a' "$backup_directory")" == 700 ]] || fail "backup directory is not owner-only: $backup_directory"
+done < <(find "$backup_root" -type d -print)
+[[ -f "$fake_home/.config/codex-room/overlays/review.config.toml" ]] || fail "customized obsolete overlay was removed"
+grep -Fqx 'operator-customized review notes' \
+  "$fake_home/.config/codex-room/overlays/review.config.toml" \
+  || fail "customized obsolete overlay changed"
 
 mapfile -t roles < <(find "$fake_home/.codex-runtime" -mindepth 1 -maxdepth 1 -type d \
   ! -name review ! -name harness -printf '%f\n' | LC_ALL=C sort)
@@ -122,6 +221,9 @@ provider_inventory=$(jq -c '[.agents.providers | keys[] | select(startswith("cod
 mcp_inventory=$(jq -c '.daemon.mcp.injectIntoProviders' "$paseo_config")
 [[ "$provider_inventory" == '["codex-lead","codex-peer","codex-supervisor"]' ]] || fail "unexpected Codex provider inventory: $provider_inventory"
 [[ "$mcp_inventory" == '["codex-supervisor","codex-lead"]' ]] || fail "unexpected MCP recipients: $mcp_inventory"
+
+PASEO_COMMAND="$fake_bin/paseo-live" "$source_root/install" --verify
+printf 'PUBLIC_VERIFY_FIXTURE_OK live_inventory_is_fake\n'
 
 for legacy_role in review harness; do
   rejects "$fake_home/.local/bin/codex-room" "$legacy_role"

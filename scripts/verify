@@ -145,6 +145,11 @@ if [[ "$mode" == source ]]; then
     check "historical rendered obsolete fixture exists: $historical_fixture" test -f "$historical_fixture"
   done
   for retired_source in \
+    "$REPO_ROOT/scripts/bootstrap" \
+    "$REPO_ROOT/scripts/session-usage" \
+    "$REPO_ROOT/docs/session-usage-benchmark.md" \
+    "$REPO_ROOT/docs/specs/2026-08-30-harness-plugin-registration-persistence.md" \
+    "$REPO_ROOT/tests/fixtures/session-usage.jsonl" \
     "$workflow_root/ANTI_PATTERNS.md" \
     "$workflow_root/SUPERVISOR_NOTEBOOK.md" \
     "$REPO_ROOT/scripts/workflow-pilot-report" \
@@ -157,11 +162,12 @@ if [[ "$mode" == source ]]; then
   done
 fi
 
-rejects_legacy_evidence_role() {
-  ! "$launcher_path" --resolve-evidence-home "$1" >/dev/null 2>&1
+rejects_legacy_role() {
+  ! "$launcher_path" "$1" >/dev/null 2>&1
 }
-check "launcher rejects Review evidence home" rejects_legacy_evidence_role review
-check "launcher rejects Harness evidence home" rejects_legacy_evidence_role harness
+check "launcher rejects Review role" rejects_legacy_role review
+check "launcher rejects Harness role" rejects_legacy_role harness
+check "launcher has one public role route" bash -c '! grep -Fq -- "--resolve-evidence-home" "$1"' bash "$launcher_path"
 
 check "Human authority is explicit" grep -Fq "Human owns product goals" "$workflow_root/WORKSPACE_PROTOCOL.md"
 check "Lead acceptance is explicit" grep -Fq "explicitly accepts or rejects" "$workflow_root/WORKSPACE_PROTOCOL.md"
