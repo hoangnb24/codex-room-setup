@@ -3,8 +3,8 @@
 This setup targets Hoang's fork of Paseo and installs it at the same path used by the current local scripts.
 
 ```text
-fork remote: git@github.com:hoangnb24/paseo.git
-upstream:    git@github.com:getpaseo/paseo.git
+fork remote: https://github.com/hoangnb24/paseo.git
+upstream:    https://github.com/getpaseo/paseo.git
 checkout:    ~/projects/supervisors/paseo
 branch:      main
 baseline:    v0.7.0-beta.1-13-g8511089ea

@@ -391,6 +391,22 @@ def configured_paths(home: Path, manifest: dict[str, str]) -> dict[str, Path | s
     }
 
 
+def remote_matches_expected(actual: str, expected: str) -> bool:
+    """Accept only the exact SSH URLs used by the previous public manifest."""
+    if actual == expected:
+        return True
+    return (actual, expected) in {
+        (
+            "git@github.com:hoangnb24/paseo.git",
+            "https://github.com/hoangnb24/paseo.git",
+        ),
+        (
+            "git@github.com:getpaseo/paseo.git",
+            "https://github.com/getpaseo/paseo.git",
+        ),
+    }
+
+
 def command_path(command: str) -> Optional[str]:
     candidate = Path(command).expanduser()
     if candidate.is_absolute() or "/" in command:
@@ -735,8 +751,18 @@ def validate_existing_paseo(paths: dict[str, Path | str]) -> None:
     legacy = git_read_optional(target, "remote", "get-url", "hoangnb24") if "hoangnb24" in remotes else ""
     expected_origin = str(paths["fork"])
     expected_upstream = str(paths["upstream"])
-    normalized = remotes == ["origin", "upstream"] and origin == expected_origin and upstream == expected_upstream and not legacy
-    legacy_topology = remotes == ["hoangnb24", "origin"] and origin == expected_upstream and legacy == expected_origin and not upstream
+    normalized = (
+        remotes == ["origin", "upstream"]
+        and remote_matches_expected(origin, expected_origin)
+        and remote_matches_expected(upstream, expected_upstream)
+        and not legacy
+    )
+    legacy_topology = (
+        remotes == ["hoangnb24", "origin"]
+        and remote_matches_expected(origin, expected_upstream)
+        and remote_matches_expected(legacy, expected_origin)
+        and not upstream
+    )
     if not (normalized or legacy_topology):
         fail("Paseo checkout has an unrecognized remote topology")
     tracking = git_read_optional(target, "config", "--get", f"branch.{branch}.remote")

@@ -23,10 +23,12 @@ An existing checkout must be on the expected branch with a clean tracked/index
 state. Untracked operator state is preserved. The installer accepts only an
 exact-pin no-op or a clean ancestor-to-pin fast-forward; detached, ahead,
 divergent, dirty, and custom-topology checkouts are refused. It never performs
-an automatic pull, merge, rebase, or reset. The only automatic remote migration
-is the recognized legacy layout (`origin = public`, `hoangnb24 = owner fork`),
-which becomes `origin = owner fork`, `upstream = public` after eligibility is
-proven. The local branch then tracks `origin`.
+an automatic pull, merge, rebase, or reset. It migrates the recognized legacy
+layout (`origin = public`, `hoangnb24 = owner fork`) to `origin = owner fork`,
+`upstream = public` after eligibility is proven. Previous SSH URLs for these
+same GitHub repositories are accepted and migrated to the canonical HTTPS
+URLs during apply. Preflight and verification do not modify remotes. The
+local branch then tracks `origin`.
 
 Paseo's audited `prepare` lifecycle installs lefthook with force. Before
 `npm ci`, setup refuses custom hooks and a custom `core.hooksPath`; after the
@@ -39,4 +41,5 @@ fast-forward-only policy before dependency install/build. It never silently
 follows a newer upstream or fork branch tip. Its macOS build behavior is
 documented in [`paseo/notes/desktop-build.md`](../paseo/notes/desktop-build.md).
 
-Access to the fork remote is an operator prerequisite. The installer does not manage SSH keys or GitHub authentication.
+The public repositories are downloaded over HTTPS without GitHub authentication
+or SSH keys. Network access to GitHub and the npm registry is required.

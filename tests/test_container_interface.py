@@ -30,6 +30,10 @@ class ContainerAcceptanceInterfaceTests(unittest.TestCase):
         self.assertIn('"$source_root/install" --verify', self.accept)
         self.assertIn("PUBLIC_PLAN_READ_ONLY_OK", self.accept)
         self.assertIn("live_inventory_is_fake", self.accept)
+        self.assertNotIn("verify-installed", self.accept)
+        self.assertNotIn("export PASEO_FORK_URL=", self.accept)
+        self.assertNotIn("export PASEO_UPSTREAM_URL=", self.accept)
+        self.assertNotIn("git@github.com:", self.accept)
 
     def test_acceptance_script_covers_frozen_invariants(self) -> None:
         signals = (
@@ -41,7 +45,6 @@ class ContainerAcceptanceInterfaceTests(unittest.TestCase):
             'harness/state.sqlite',
             'sessions/live.jsonl',
             "operator or session marker bytes changed",
-            'CODEX_ROOM_VERIFY_BIN="$fake_bin/verify-installed"',
             "CONTAINER_ACCEPTANCE_OK",
             "RUNTIME_TREE",
         )

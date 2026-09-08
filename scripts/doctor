@@ -77,7 +77,15 @@ if [[ -d "$paseo_checkout/.git" ]]; then
     "tracking-ref|refs/heads/$paseo_branch|$tracking_merge" \
     "remote-set|origin upstream |$remote_names"; do
     IFS='|' read -r label expected actual <<<"$check_pair"
-    if [[ "$actual" == "$expected" ]]; then
+    matches=false
+    if [[ "$label" == origin || "$label" == upstream ]]; then
+      if remote_matches_expected "$actual" "$expected"; then
+        matches=true
+      fi
+    elif [[ "$actual" == "$expected" ]]; then
+      matches=true
+    fi
+    if [[ "$matches" == true ]]; then
       log "OK    Paseo $label  $actual"
     else
       log "WARN  Paseo $label  expected $expected; found ${actual:-missing}"

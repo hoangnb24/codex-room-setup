@@ -494,11 +494,187 @@ class SetupShapeTests(unittest.TestCase):
             changing_env = self.paseo_env(home, remote, target, second, changing_npm)
             self.assertNotEqual(subprocess.run([str(ROOT / "scripts" / "install-paseo-fork")], env=changing_env).returncode, 0)
 
+    def test_paseo_existing_ssh_remotes_are_read_only_preflight_and_https_on_apply(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary); home = root / "home"; target = root / "checkout"
+            remote, first, second = self.make_paseo_remote(root)
+            npm = self.fake_npm(root)
+            subprocess.run(["git", "clone", "-q", str(remote), str(target)], check=True)
+            subprocess.run(["git", "-C", str(target), "checkout", "-q", "-B", "main", first], check=True)
+            subprocess.run(
+                ["git", "-C", str(target), "remote", "set-url", "origin", "git@github.com:hoangnb24/paseo.git"],
+                check=True,
+            )
+            subprocess.run(
+                ["git", "-C", str(target), "remote", "add", "upstream", "git@github.com:getpaseo/paseo.git"],
+                check=True,
+            )
+            git_config = root / "gitconfig"
+            git_config.write_text(
+                f'[url "{remote}"]\n'
+                "    insteadOf = https://github.com/hoangnb24/paseo.git\n"
+                f'[url "{remote}"]\n'
+                "    insteadOf = https://github.com/getpaseo/paseo.git\n"
+            )
+            env = self.paseo_env(home, remote, target, second, npm)
+            env.update(
+                {
+                    "PASEO_FORK_URL": "https://github.com/hoangnb24/paseo.git",
+                    "PASEO_UPSTREAM_URL": "https://github.com/getpaseo/paseo.git",
+                    "GIT_CONFIG_GLOBAL": str(git_config),
+                }
+            )
+            before = subprocess.run(
+                ["git", "-C", str(target), "remote", "-v"],
+                check=True,
+                capture_output=True,
+                text=True,
+                env=env,
+            ).stdout
+
+            preflight = subprocess.run(
+                [str(ROOT / "scripts/install-paseo-fork"), "--preflight"],
+                env=env,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(preflight.returncode, 0, preflight.stdout + preflight.stderr)
+            self.assertEqual(
+                subprocess.run(
+                    ["git", "-C", str(target), "remote", "-v"],
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                    env=env,
+                ).stdout,
+                before,
+            )
+
+            subprocess.run(
+                [str(ROOT / "scripts/install-paseo-fork")],
+                check=True,
+                env=env,
+                capture_output=True,
+                text=True,
+            )
+            canonical_remote_env = {**env, "GIT_CONFIG_GLOBAL": os.devnull}
+            self.assertEqual(
+                subprocess.run(
+                    ["git", "-C", str(target), "remote", "get-url", "origin"],
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                    env=canonical_remote_env,
+                ).stdout.strip(),
+                "https://github.com/hoangnb24/paseo.git",
+            )
+            self.assertEqual(
+                subprocess.run(
+                    ["git", "-C", str(target), "remote", "get-url", "upstream"],
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                    env=canonical_remote_env,
+                ).stdout.strip(),
+                "https://github.com/getpaseo/paseo.git",
+            )
+
+    def test_paseo_legacy_ssh_remote_topology_is_migrated_on_apply(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary); home = root / "home"; target = root / "checkout"
+            remote, first, second = self.make_paseo_remote(root)
+            npm = self.fake_npm(root)
+            subprocess.run(["git", "clone", "-q", str(remote), str(target)], check=True)
+            subprocess.run(["git", "-C", str(target), "checkout", "-q", "-B", "main", first], check=True)
+            subprocess.run(["git", "-C", str(target), "remote", "rename", "origin", "hoangnb24"], check=True)
+            subprocess.run(
+                ["git", "-C", str(target), "remote", "add", "origin", "git@github.com:getpaseo/paseo.git"],
+                check=True,
+            )
+            subprocess.run(
+                ["git", "-C", str(target), "remote", "set-url", "hoangnb24", "git@github.com:hoangnb24/paseo.git"],
+                check=True,
+            )
+            subprocess.run(["git", "-C", str(target), "config", "branch.main.remote", "origin"], check=True)
+            git_config = root / "gitconfig"
+            git_config.write_text(
+                f'[url "{remote}"]\n'
+                "    insteadOf = https://github.com/hoangnb24/paseo.git\n"
+                "    insteadOf = https://github.com/getpaseo/paseo.git\n"
+            )
+            env = self.paseo_env(home, remote, target, second, npm)
+            env.update(
+                {
+                    "PASEO_FORK_URL": "https://github.com/hoangnb24/paseo.git",
+                    "PASEO_UPSTREAM_URL": "https://github.com/getpaseo/paseo.git",
+                    "GIT_CONFIG_GLOBAL": str(git_config),
+                }
+            )
+
+            preflight = subprocess.run(
+                [str(ROOT / "scripts/install-paseo-fork"), "--preflight"],
+                env=env,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(preflight.returncode, 0, preflight.stdout + preflight.stderr)
+            self.assertEqual(
+                subprocess.run(
+                    ["git", "-C", str(target), "remote"],
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                ).stdout.splitlines(),
+                ["hoangnb24", "origin"],
+            )
+
+            applied = subprocess.run(
+                [str(ROOT / "scripts/install-paseo-fork")],
+                env=env,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(applied.returncode, 0, applied.stdout + applied.stderr)
+            canonical_remote_env = {**env, "GIT_CONFIG_GLOBAL": os.devnull}
+            self.assertEqual(
+                subprocess.run(
+                    ["git", "-C", str(target), "remote"],
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                    env=canonical_remote_env,
+                ).stdout.splitlines(),
+                ["origin", "upstream"],
+            )
+            self.assertEqual(
+                subprocess.run(
+                    ["git", "-C", str(target), "remote", "get-url", "origin"],
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                    env=canonical_remote_env,
+                ).stdout.strip(),
+                "https://github.com/hoangnb24/paseo.git",
+            )
+            self.assertEqual(
+                subprocess.run(
+                    ["git", "-C", str(target), "remote", "get-url", "upstream"],
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                    env=canonical_remote_env,
+                ).stdout.strip(),
+                "https://github.com/getpaseo/paseo.git",
+            )
+
     def test_fork_provenance_and_update_sources_are_explicit(self) -> None:
         paseo_source = (ROOT / "paseo" / "source.toml").read_text()
         updater = (HOME_MIRROR / ".local" / "bin" / "paseo-local-update").read_text()
 
-        self.assertIn('fork = "git@github.com:hoangnb24/paseo.git"', paseo_source)
+        self.assertIn('fork = "https://github.com/hoangnb24/paseo.git"', paseo_source)
+        self.assertIn('upstream = "https://github.com/getpaseo/paseo.git"', paseo_source)
+        self.assertIn('PASEO_FORK_URL="${PASEO_FORK_URL:-https://github.com/hoangnb24/paseo.git}"', updater)
+        self.assertIn('PASEO_UPSTREAM_URL="${PASEO_UPSTREAM_URL:-https://github.com/getpaseo/paseo.git}"', updater)
         self.assertIn(
             'verified_commit = "8511089eaeb06cddd049b629562926822020de5c"',
             paseo_source,
@@ -578,6 +754,15 @@ class SetupShapeTests(unittest.TestCase):
             completed = subprocess.run([str(ROOT / "scripts/verify")], env=env, capture_output=True, text=True)
             self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
             self.assertIn("OK    Paseo CLI links to local fork", completed.stdout)
+            self.assertEqual(
+                subprocess.run(
+                    ["git", "-C", str(paseo), "remote", "get-url", "origin"],
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                ).stdout.strip(),
+                "git@github.com:hoangnb24/paseo.git",
+            )
             self.assertFalse((root / "ocr.log").exists())
             self.assertEqual((runtime / "review/private").read_text(), "must remain ignored\n")
             self.assertEqual((runtime / "harness/private").read_text(), "must remain ignored\n")
@@ -802,6 +987,10 @@ class PublicInstallTransactionTests(unittest.TestCase):
             "  if [ \"${PREFLIGHT_FAIL:-0}\" = 1 ]; then exit 19; fi\n"
             "  exit 0\n"
             "fi\n"
+            "if [ \"${NORMALIZE_REMOTES:-0}\" = 1 ] && [ -d \"$PASEO_REPO_DIR/.git\" ]; then\n"
+            "  git -C \"$PASEO_REPO_DIR\" remote set-url origin \"$PASEO_FORK_URL\"\n"
+            "  git -C \"$PASEO_REPO_DIR\" remote set-url upstream \"$PASEO_UPSTREAM_URL\"\n"
+            "fi\n"
             "mkdir -p \"$PASEO_REPO_DIR/packages/cli/bin\"\n"
             "if [ ! -d \"$PASEO_REPO_DIR/.git\" ]; then\n"
             "  git init -q -b main \"$PASEO_REPO_DIR\"\n"
@@ -1023,6 +1212,42 @@ class PublicInstallTransactionTests(unittest.TestCase):
         self.assertFalse((self.home / "projects").exists())
         self.assertFalse((self.home / ".local/bin/paseo").exists())
         self.assertFalse((self.home / ".config/codex-room/model-instructions.md").exists())
+
+    def test_ssh_remote_migration_rolls_back_with_failed_final_verification(self) -> None:
+        paseo = self.make_fake_paseo()
+        verifier = self.make_fake_verifier()
+        env = self.lifecycle_env(paseo, verifier)
+        first = self.run_install(("--apply",), env)
+        self.assertEqual(first.returncode, 0, first.stdout + first.stderr)
+
+        checkout = self.home / "projects/supervisors/paseo"
+        subprocess.run(
+            ["git", "-C", str(checkout), "remote", "set-url", "origin", "git@github.com:hoangnb24/paseo.git"],
+            check=True,
+        )
+        subprocess.run(
+            ["git", "-C", str(checkout), "remote", "set-url", "upstream", "git@github.com:getpaseo/paseo.git"],
+            check=True,
+        )
+        before = (checkout / ".git/config").read_bytes()
+        verification_count_before = len((self.root / "verify.log").read_text().splitlines())
+        failed = self.run_install(
+            ("--apply",),
+            {**env, "NORMALIZE_REMOTES": "1", "VERIFY_FAIL": "1"},
+        )
+        self.assertNotEqual(failed.returncode, 0)
+        verification_count_after = len((self.root / "verify.log").read_text().splitlines())
+        self.assertGreater(verification_count_after, verification_count_before)
+        self.assertEqual((checkout / ".git/config").read_bytes(), before)
+        self.assertEqual(
+            subprocess.run(
+                ["git", "-C", str(checkout), "remote", "get-url", "origin"],
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout.strip(),
+            "git@github.com:hoangnb24/paseo.git",
+        )
 
     def test_customized_obsolete_path_is_preserved_and_warned(self) -> None:
         obsolete = self.home / ".config/codex-room/overlays/review.config.toml"

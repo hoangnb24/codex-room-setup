@@ -3,8 +3,8 @@ set -euo pipefail
 
 PASEO_REPO_DIR="${PASEO_REPO_DIR:-@@HOME@@/projects/supervisors/paseo}"
 PASEO_HOME_DIR="${PASEO_HOME_DIR:-@@HOME@@/.paseo}"
-PASEO_FORK_URL="${PASEO_FORK_URL:-git@github.com:hoangnb24/paseo.git}"
-PASEO_UPSTREAM_URL="${PASEO_UPSTREAM_URL:-git@github.com:getpaseo/paseo.git}"
+PASEO_FORK_URL="${PASEO_FORK_URL:-https://github.com/hoangnb24/paseo.git}"
+PASEO_UPSTREAM_URL="${PASEO_UPSTREAM_URL:-https://github.com/getpaseo/paseo.git}"
 PASEO_BRANCH="${PASEO_BRANCH:-main}"
 PASEO_VERIFIED_COMMIT="${PASEO_VERIFIED_COMMIT:-8511089eaeb06cddd049b629562926822020de5c}"
 NPM_BIN="${PASEO_NPM_BIN:-npm}"
