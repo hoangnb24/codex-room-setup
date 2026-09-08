@@ -1,7 +1,11 @@
 # Operations
 
-The public lifecycle is `./install`, `./install --apply`, then an explicit
-Paseo daemon start followed by `./install --verify`. The other scripts in this
+The public lifecycle is `./install`, `./install --apply`, then a daemon status
+check followed by `./install --verify`. Start the daemon only when none is
+running. For an existing Desktop-managed daemon, reload configuration with
+`paseo daemon reload` and use Desktop to restart if the reload reports settings
+that require it. Installing the CLI fork does not replace Desktop's daemon.
+The other scripts in this
 repository are focused maintenance interfaces used after that installation;
 they are not alternate fresh-install workflows.
 
@@ -11,7 +15,7 @@ they are not alternate fresh-install workflows.
 2. Run `make test` and `./scripts/verify --source`.
 3. Run `./install` to inspect the complete read-only plan.
 4. Run `./install --apply` to publish the changed source transactionally.
-5. Start Paseo when no agent turn is active, then run `./install --verify`.
+5. Check `paseo daemon status`; start only if stopped, then run `./install --verify`.
 
 The three roles have distinct authority. Human keeps product, cost, external
 effect, and irreversible-risk decisions. Supervisor observes and routes Human

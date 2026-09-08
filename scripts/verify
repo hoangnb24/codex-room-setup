@@ -240,10 +240,13 @@ PY
   expected_paseo_branch=$(awk -F'"' '/^branch = / {print $2; exit}' "$REPO_ROOT/paseo/source.toml")
   expected_paseo_fork=$(awk -F'"' '/^fork = / {print $2; exit}' "$REPO_ROOT/paseo/source.toml")
   expected_paseo_upstream=$(awk -F'"' '/^upstream = / {print $2; exit}' "$REPO_ROOT/paseo/source.toml")
+  paseo_remote_matches_expected() {
+    remote_matches_expected "$1" "$2"
+  }
   check "Paseo checkout commit" test "$(git -C "$paseo_checkout" rev-parse HEAD 2>/dev/null || true)" = "$expected_paseo_commit"
   check "Paseo checkout branch" test "$(git -C "$paseo_checkout" branch --show-current 2>/dev/null || true)" = "$expected_paseo_branch"
-  check "Paseo origin is owner fork" test "$(git -C "$paseo_checkout" remote get-url origin 2>/dev/null || true)" = "$expected_paseo_fork"
-  check "Paseo upstream is public" test "$(git -C "$paseo_checkout" remote get-url upstream 2>/dev/null || true)" = "$expected_paseo_upstream"
+  check "Paseo origin is owner fork" paseo_remote_matches_expected "$(git -C "$paseo_checkout" remote get-url origin 2>/dev/null || true)" "$expected_paseo_fork"
+  check "Paseo upstream is public" paseo_remote_matches_expected "$(git -C "$paseo_checkout" remote get-url upstream 2>/dev/null || true)" "$expected_paseo_upstream"
   check "Paseo branch tracks origin" test "$(git -C "$paseo_checkout" config --get "branch.$expected_paseo_branch.remote" 2>/dev/null || true)" = origin
   check "Paseo tracking ref" test "$(git -C "$paseo_checkout" config --get "branch.$expected_paseo_branch.merge" 2>/dev/null || true)" = "refs/heads/$expected_paseo_branch"
   runtime_root="${CODEX_ROOM_RUNTIME_ROOT:-$HOME/.codex-runtime}"

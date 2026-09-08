@@ -52,19 +52,35 @@ cd codex-room-setup
 ./install --verify                # installed checks plus live provider inventory
 ```
 
+The public Paseo repositories are fetched over HTTPS. GitHub authentication
+and SSH keys are not required. When upgrading an existing installation, the
+installer also recognizes the previous SSH URLs for these same repositories
+and migrates them to HTTPS within the backed-up transaction.
+
 The root command preflights the pinned Paseo checkout, installs dependencies,
 builds the Paseo server/CLI bundles, renders managed HOME files, stages all
 three role runtimes, and publishes the complete transition with rollback on a
 dependency, build, generation, or final verification failure. It does not
 install or authenticate Codex, touch `~/.codex`, start a daemon, or build
-Paseo Desktop. Start and reach the local provider daemon explicitly before
-live verification:
+Paseo Desktop. Check the local daemon before live verification:
 
 ```bash
-paseo daemon start
 paseo daemon status
+# Only if no local daemon is running:
+paseo daemon start
 ./install --verify
 ```
+
+If Paseo Desktop already manages the local daemon, use `paseo daemon reload`
+to apply reloadable configuration instead of starting a second daemon. The
+reload output lists any settings that require a restart; restart through
+Desktop when those changes are needed. Installing the CLI fork does not
+replace the daemon bundled with Desktop.
+
+If `start` reports only a background startup failure and old logs, running
+`paseo daemon start --foreground` shows the startup error directly. An
+`Another Paseo daemon is already running` error means the existing daemon
+must be used or stopped through its owner before starting another.
 
 `./install --verify` is read-only and fails when the live Paseo provider
 inventory cannot be reached. Use `scripts/verify` for an installed-only
@@ -121,7 +137,6 @@ It never writes to `~/.codex`.
 After the fork exists at `~/projects/supervisors/paseo`:
 
 ```bash
-paseo daemon start
 paseo daemon status
 paseo-local-update
 ```

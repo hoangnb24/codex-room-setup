@@ -107,6 +107,9 @@ validate_existing_target() {
   local repo="$1" history_repo="$2" actual_branch origin upstream legacy
   local remote_names tracking_remote tracking_merge fetched_existing
 
+  remote_mode=""
+  remote_needs_normalization=false
+
   [[ -d "$repo" && ! -L "$repo" && -d "$repo/.git" && ! -L "$repo/.git" ]] || die "target exists but is not a direct Git checkout: $repo"
   actual_branch=$(git -C "$repo" branch --show-current)
   [[ "$actual_branch" == "$branch" ]] || die "expected Paseo branch $branch; found ${actual_branch:-detached HEAD}"
@@ -119,10 +122,20 @@ validate_existing_target() {
   remote_names=$(git -C "$repo" remote | LC_ALL=C sort | tr '\n' ' ')
   tracking_remote=$(git -C "$repo" config --get "branch.$branch.remote" 2>/dev/null || true)
   tracking_merge=$(git -C "$repo" config --get "branch.$branch.merge" 2>/dev/null || true)
-  if [[ "$remote_names" == "origin upstream " && "$origin" == "$fork_url" && "$upstream" == "$upstream_url" && -z "$legacy" && "$tracking_remote" == origin && "$tracking_merge" == "refs/heads/$branch" ]]; then
+  if [[ "$remote_names" == "origin upstream " && -z "$legacy" && "$tracking_remote" == origin && "$tracking_merge" == "refs/heads/$branch" ]] \
+    && remote_matches_expected "$origin" "$fork_url" \
+    && remote_matches_expected "$upstream" "$upstream_url"; then
     remote_mode=normalized
-  elif [[ "$remote_names" == "hoangnb24 origin " && "$origin" == "$upstream_url" && -z "$upstream" && "$legacy" == "$fork_url" && "$tracking_remote" == origin && "$tracking_merge" == "refs/heads/$branch" ]]; then
+    if [[ "$origin" != "$fork_url" || "$upstream" != "$upstream_url" ]]; then
+      remote_needs_normalization=true
+    fi
+  elif [[ "$remote_names" == "hoangnb24 origin " && -z "$upstream" && "$tracking_remote" == origin && "$tracking_merge" == "refs/heads/$branch" ]] \
+    && remote_matches_expected "$origin" "$upstream_url" \
+    && remote_matches_expected "$legacy" "$fork_url"; then
     remote_mode=legacy
+    if [[ "$origin" != "$upstream_url" || "$legacy" != "$fork_url" ]]; then
+      remote_needs_normalization=true
+    fi
   else
     die "unknown Paseo remote topology; expected origin=fork/upstream=public (or exact legacy origin=public/hoangnb24=fork)"
   fi
@@ -193,6 +206,10 @@ fi
 if [[ "$remote_mode" == legacy ]]; then
   git -C "$target" remote rename origin upstream
   git -C "$target" remote rename hoangnb24 origin
+fi
+if [[ "$remote_needs_normalization" == true ]]; then
+  git -C "$target" remote set-url origin "$fork_url"
+  git -C "$target" remote set-url upstream "$upstream_url"
 fi
 git -C "$target" config "branch.$branch.remote" origin
 git -C "$target" config "branch.$branch.merge" "refs/heads/$branch"

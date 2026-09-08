@@ -43,3 +43,15 @@ sha256_file() {
   fi
 }
 
+# The public manifest uses HTTPS.  Keep compatibility with only the exact
+# GitHub SSH URLs emitted by the previous manifest; callers still reject every
+# other host, owner, repository, or URL shape.
+remote_matches_expected() {
+  local actual="$1" expected="$2"
+  [[ "$actual" == "$expected" ]] && return 0
+  case "$actual|$expected" in
+    "git@github.com:hoangnb24/paseo.git|https://github.com/hoangnb24/paseo.git") return 0 ;;
+    "git@github.com:getpaseo/paseo.git|https://github.com/getpaseo/paseo.git") return 0 ;;
+    *) return 1 ;;
+  esac
+}

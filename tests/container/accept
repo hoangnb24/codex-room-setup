@@ -89,21 +89,6 @@ printf '%s\n' "$role_home" >>"${CODEX_LAUNCH_LOG:?CODEX_LAUNCH_LOG is required}"
 EOF
 chmod 0755 "$fake_bin/codex"
 
-cat >"$fake_bin/verify-installed" <<'EOF'
-#!/usr/bin/env bash
-set -euo pipefail
-target="${PASEO_REPO_DIR:-$HOME/projects/supervisors/paseo}"
-git -C "$target" remote set-url origin git@github.com:hoangnb24/paseo.git
-git -C "$target" remote set-url upstream git@github.com:getpaseo/paseo.git
-restore_https() {
-  git -C "$target" remote set-url origin https://github.com/hoangnb24/paseo.git
-  git -C "$target" remote set-url upstream https://github.com/getpaseo/paseo.git
-}
-trap restore_https EXIT
-/workspace/scripts/verify "$@"
-EOF
-chmod 0755 "$fake_bin/verify-installed"
-
 cat >"$fake_bin/paseo-live" <<'EOF'
 #!/bin/sh
 set -eu
@@ -158,9 +143,6 @@ export HOME="$fake_home"
 export PATH="$fake_bin:$fake_home/.local/bin:$PATH"
 export CODEX_LAUNCH_LOG="$acceptance_root/codex-launches.log"
 export CODEX_ROOM_MODEL_CATALOG="$fixture"
-export PASEO_FORK_URL=https://github.com/hoangnb24/paseo.git
-export PASEO_UPSTREAM_URL=https://github.com/getpaseo/paseo.git
-export CODEX_ROOM_VERIFY_BIN="$fake_bin/verify-installed"
 export npm_config_audit=false
 export npm_config_fund=false
 export npm_config_update_notifier=false

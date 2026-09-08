@@ -1,6 +1,6 @@
 [repository]
-fork = "git@github.com:hoangnb24/paseo.git"
-upstream = "git@github.com:getpaseo/paseo.git"
+fork = "https://github.com/hoangnb24/paseo.git"
+upstream = "https://github.com/getpaseo/paseo.git"
 branch = "main"
 verified_commit = "8511089eaeb06cddd049b629562926822020de5c"
 verified_describe = "v0.7.0-beta.1-13-g8511089ea"
