@@ -16,6 +16,13 @@ project-local detail, but cannot change role authority or safety boundaries.
 
 ## Ownership and dispatch
 
+Project instructions carry outcomes, constraints, and existing authority, not
+private conversation transcripts or attribution about who spoke to whom.
+Keep briefs self-contained. Preserve the meaning of an authorized decision;
+an evidence-based question does not grant new authority or revoke existing
+permission. Resolve a coordination question against current ownership and
+evidence, then continue ready work without creating another approval gate.
+
 - Give every moving write scope one owner. Run writable Peers in parallel
   only with verified, accepted inputs and separate write scopes.
 - Agree on shared contracts before dispatch. Sequence changes to shared files

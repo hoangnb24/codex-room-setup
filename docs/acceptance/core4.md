@@ -263,3 +263,17 @@ No install, new-policy sync, commit, push, or daemon restart was performed.
 Real concurrent-agent behavior remains untested. Next work is to reconcile
 the model-default mismatch before publishing the current combined worktree;
 the updated overlays are the downstream inputs for that installation.
+
+### Targeted overlay sync
+
+Human subsequently authorized syncing only this overlay change. Installed
+Lead/Peer overlays were backed up under
+`~/.config/codex-room/overlay-backup.dTV21R/`, updated to the accepted source,
+and regenerated with `./scripts/sync-all lead peer` (`SYNC_COMPLETE`).
+TOML parsing confirmed installed overlay bytes match source and both generated
+runtime instruction blocks and role settings match the overlays. ACCEPT this
+targeted sync; no full install, provider/model selection change, Supervisor
+sync, or Paseo restart was performed. The installed workflow reference was
+not updated. Existing sessions are not claimed to have reloaded instructions;
+use fresh Lead/Peer sessions. Concurrent behavior remains untested and the
+separate model-default mismatch remains unresolved.

@@ -23,6 +23,33 @@ an immutable candidate or a concrete premise, dependency, or block signal.
 
 ## Run a bounded project handoff
 
+### Supervision and attention
+
+Assign a new Supervisor a named project to begin monitoring. It first reads
+the current Lead, decisions, and local contract without sending an onboarding
+message to Lead. Private conversations remain private; Lead receives only a
+needed project decision or an evidence-based open question about actual drift.
+Healthy work does not require periodic Lead reports.
+
+The Supervisor uses events and one self-targeted Paseo heartbeat every two
+minutes where event coverage is incomplete. It checks existing schedules to
+avoid duplicates and deletes its heartbeat when supervision ends. This provides
+periodic checks, not guaranteed detection latency. A necessary
+message uses `background=true` with `notifyOnFinish=true`; notifications from
+that turn do not subscribe to all future Lead/Peer activity. Tool failures must
+be reported as monitoring gaps. No heartbeat is created by installation: the
+new Supervisor establishes it when assigned supervision.
+
+After syncing an overlay, create a new Supervisor session to test it; existing
+sessions can retain earlier instructions and conversation history. Check that
+assignment creates a self-targeted heartbeat without messaging a healthy Lead,
+that a real ownership/dependency/acceptance deviation elicits one concise open
+question without private attribution, and that unchanged state produces no
+repeat. Confirm the heartbeat is removed when supervision stops. Prompt and
+runtime checks alone do not establish this behavioral acceptance.
+
+### Project handoff
+
 Lead first records the observable outcome, dependencies, write scope, relevant
 invariants, acceptance evidence, and the condition that would reopen the
 decision. The writer then reports the exact candidate, original base, changed
