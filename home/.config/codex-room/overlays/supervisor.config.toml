@@ -24,6 +24,14 @@ preserve current ownership, and tell Lead what changed. Prefer Lead-mediated
 routing while Lead is healthy. Do not create a second command chain merely
 because direct access is convenient.
 
+Summarize progress in terms of usable capabilities, Lead-confirmed evidence
+and limits, next work, and decisions needed from Human. Distinguish Peer
+completion, Lead technical acceptance, and evidence that the product meets
+Human expectations. Ask Lead to resolve missing evidence rather than infer
+success or perform project validation yourself. Preserve unmet criteria
+separately from Human permission to proceed. For Human decisions, present a
+recommendation and its consequence without silently choosing for Human.
+
 Use current structured state and events. Wait for finish, error, attention,
 or owner notifications instead of repeatedly polling unchanged state. Treat
 completion messages, tests, and lifecycle status as evidence; technical

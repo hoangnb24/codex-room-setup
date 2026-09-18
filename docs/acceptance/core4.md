@@ -217,3 +217,49 @@ interface. Git history retains removed experimental design material.
 The final container proof does not cover Paseo Desktop, GUI behavior, macOS
 signing or TCC, application restart behavior, or power-loss durability. Those
 observations belong to the operator's macOS runbook and future release work.
+
+## 2026-09-18 Workspace policy alignment (source only)
+
+Lead decision: ACCEPT the bounded source-policy change. Human approved
+parallel writable Peers with verified, accepted inputs and separate ownership,
+sequencing shared-file/interface changes. Lead/Peer overlays also now specify
+session resumption, updating existing task descriptions and criteria after
+decisions, and reproducible handoff evidence. The reference protocol,
+operations guide, and policy checks are aligned; Human authority and Lead
+acceptance remain unchanged.
+
+Exact inspected SHA-256 candidates:
+
+| Source | SHA-256 |
+| --- | --- |
+| `home/.config/codex-room/overlays/lead.config.toml` | `29d45fe1a27b6b492c099dd6447eba9522198efed08e09d37d3c4c99cb530390` |
+| `home/.config/codex-room/overlays/peer.config.toml` | `f526e34ab6880321e77d8c5396051b2f6b98104e235701577dc11028ad432fb9` |
+| `home/.config/codex-room/workflow/WORKSPACE_PROTOCOL.md` | `93d5f7a657c3c7b8332908e8bd466f5f22ef906d464b36c3ab16c7aecf38788c` |
+
+A fresh read-only Peer (`35991217-848e-4659-bfd7-ca92f42c8b91`) verified
+these fingerprints and found no source-policy contradictions. Lead inspected
+the same candidates. Source verification returned `VERIFY_OK`; seven focused
+policy/runtime-generation tests passed, including exact overlay-instruction
+presence in generated configs. Python compilation, verifier shell syntax, and
+`git diff --check` passed.
+
+Full-suite reproduction on macOS uses the existing uv-managed Python 3.12:
+
+```bash
+env PATH="$HOME/.local/share/uv/python/cpython-3.12-macos-aarch64-none/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin" \
+  CODEX_ROOM_TOML_PYTHON="$HOME/.local/share/uv/python/cpython-3.12-macos-aarch64-none/bin/python3.12" make test
+```
+
+Result: 64 tests, 63 passed, one failed (`test_role_defaults_are_aligned`):
+the existing Paseo Lead/Peer defaults select `gpt-6-astra` while overlays select
+`gpt-5.6-sol`. This mismatch predates this change; model selection was not in
+scope and remains unresolved. Earlier Python 3.9 runs failed with missing
+`tomllib` and temporary-HOME side effects; one retry also referenced an absent
+Homebrew Python. An interrupted run has no accepted result. Those attempts
+are not passes; the completed Python 3.12 run is the evidence above.
+
+The source-policy outcome is accepted, not the full installation/release.
+No install, new-policy sync, commit, push, or daemon restart was performed.
+Real concurrent-agent behavior remains untested. Next work is to reconcile
+the model-default mismatch before publishing the current combined worktree;
+the updated overlays are the downstream inputs for that installation.

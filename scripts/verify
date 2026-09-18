@@ -171,7 +171,8 @@ check "launcher has one public role route" bash -c '! grep -Fq -- "--resolve-evi
 
 check "Human authority is explicit" grep -Fq "Human owns product goals" "$workflow_root/WORKSPACE_PROTOCOL.md"
 check "Lead acceptance is explicit" grep -Fq "explicitly accepts or rejects" "$workflow_root/WORKSPACE_PROTOCOL.md"
-check "single writable Peer boundary is explicit" grep -Fq "at most one active" "$workflow_root/WORKSPACE_PROTOCOL.md"
+check "parallel work requires ready inputs and separate scopes" grep -Fq "only with verified, accepted inputs and separate write scopes" "$workflow_root/WORKSPACE_PROTOCOL.md"
+check "each moving write scope has one owner" grep -Fq "Give every moving write scope one owner" "$workflow_root/WORKSPACE_PROTOCOL.md"
 check "Peer challenge signals are explicit" grep -Fq "REOPEN_REQUEST" "$workflow_root/WORKSPACE_PROTOCOL.md"
 check "event-driven waiting is explicit" grep -Fq "repeatedly polling unchanged state" "$workflow_root/WORKSPACE_PROTOCOL.md"
 
@@ -189,9 +190,7 @@ check "exactly three derived Codex providers" jq -e '
   [.agents.providers | keys[] | select(startswith("codex-"))] |
   sort == ["codex-lead", "codex-peer", "codex-supervisor"]
 ' "$config_template"
-check "exact MCP injection boundary" jq -e '
-  .daemon.mcp.injectIntoProviders == ["codex-supervisor", "codex-lead"]
-' "$config_template"
+check "exact Paseo tool boundary" jq -e -f "$REPO_ROOT/scripts/lib/paseo-tools.jq" "$config_template"
 
 if [[ "$mode" == installed ]]; then
   toml_python="${CODEX_ROOM_TOML_PYTHON:-python3.11}"
@@ -225,7 +224,7 @@ PY
   expected_paseo_cli="$paseo_checkout/packages/cli/bin/paseo"
   expected_paseo_cli_bundle="$paseo_checkout/packages/cli/dist/index.js"
   expected_paseo_server_bundle="$paseo_checkout/packages/server/dist/scripts/supervisor-entrypoint.js"
-  check "Paseo CLI links to local fork" test \
+  check "Paseo CLI links to stable release" test \
     "$(readlink "$paseo_cli_link" 2>/dev/null || true)" = "$expected_paseo_cli"
   check "Paseo CLI entrypoint is executable" test -x "$expected_paseo_cli"
   check "Paseo CLI bundle exists" test -f "$expected_paseo_cli_bundle"
@@ -238,14 +237,15 @@ PY
   check "Paseo CLI --help runs" paseo_cli_help
   expected_paseo_commit=$(awk -F'"' '/^verified_commit = / {print $2}' "$REPO_ROOT/paseo/source.toml")
   expected_paseo_branch=$(awk -F'"' '/^branch = / {print $2; exit}' "$REPO_ROOT/paseo/source.toml")
-  expected_paseo_fork=$(awk -F'"' '/^fork = / {print $2; exit}' "$REPO_ROOT/paseo/source.toml")
-  expected_paseo_upstream=$(awk -F'"' '/^upstream = / {print $2; exit}' "$REPO_ROOT/paseo/source.toml")
+  expected_paseo_source=$(awk -F'"' '/^url = / {print $2; exit}' "$REPO_ROOT/paseo/source.toml")
   check "Paseo checkout commit" test "$(git -C "$paseo_checkout" rev-parse HEAD 2>/dev/null || true)" = "$expected_paseo_commit"
   check "Paseo checkout branch" test "$(git -C "$paseo_checkout" branch --show-current 2>/dev/null || true)" = "$expected_paseo_branch"
-  check "Paseo origin is owner fork" test "$(git -C "$paseo_checkout" remote get-url origin 2>/dev/null || true)" = "$expected_paseo_fork"
-  check "Paseo upstream is public" test "$(git -C "$paseo_checkout" remote get-url upstream 2>/dev/null || true)" = "$expected_paseo_upstream"
+  check "Paseo origin is official source" test "$(git -C "$paseo_checkout" remote get-url origin 2>/dev/null || true)" = "$expected_paseo_source"
   check "Paseo branch tracks origin" test "$(git -C "$paseo_checkout" config --get "branch.$expected_paseo_branch.remote" 2>/dev/null || true)" = origin
   check "Paseo tracking ref" test "$(git -C "$paseo_checkout" config --get "branch.$expected_paseo_branch.merge" 2>/dev/null || true)" = "refs/heads/$expected_paseo_branch"
+  expected_paseo_tag=$(awk -F'"' '/^release_tag = / {print $2; exit}' "$REPO_ROOT/paseo/source.toml")
+  check "Paseo stable release tag" test "$(git -C "$paseo_checkout" rev-parse "refs/tags/$expected_paseo_tag^{commit}" 2>/dev/null || true)" = "$expected_paseo_commit"
+  check "Paseo remote set" test "$(git -C "$paseo_checkout" remote)" = origin
   runtime_root="${CODEX_ROOM_RUNTIME_ROOT:-$HOME/.codex-runtime}"
   for role in supervisor lead peer; do
     runtime="$runtime_root/$role"

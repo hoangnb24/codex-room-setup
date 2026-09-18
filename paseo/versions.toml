@@ -3,4 +3,4 @@ paseo = "0.7.0-beta.1"
 codex_cli = "0.150.1"
 
 # Node and npm are intentionally not pinned here. Use the versions supported
-# by the fork's package.json/package manager metadata.
+# by the release's package.json/package manager metadata.

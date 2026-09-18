@@ -1,6 +1,6 @@
 # Codex Room Setup
 
-Reproducible configuration for a three-role Codex room running through a local Paseo fork:
+Reproducible configuration for a three-role Codex room running through an official Paseo stable release:
 
 ```text
 Paseo provider
@@ -96,11 +96,12 @@ repeatability, preservation, and real Paseo daemon startup with a provider RPC.
 Authenticated Codex sessions, Paseo Desktop/GUI behavior, and macOS
 signing/TCC/application restart remain operator checks.
 
-The Paseo source manifest pins an immutable commit. The public installer
+The Paseo source manifest pins official stable release **v0.8.0** and its immutable commit.
+It never installs a daily main build or beta. See [release selection and fork migration](docs/paseo-release.md). The public installer
 preflights Paseo in a disposable location before changing live state. Paseo uses
 `npm ci` and refuses custom Git hooks because its audited `prepare` lifecycle
-installs lefthook; updates are exact-pin/no-op or fast-forward-only and never
-silently pull from public upstream.
+installs lefthook; official-release updates are exact-pin/no-op or fast-forward-only. The recognized
+old Room fork is migrated once inside the backed-up install transaction.
 
 The installer backs up every replaced managed file and the Paseo checkout under
 `~/.codex-room-backups/core3-<UTC timestamp>-<pid>-<nanoseconds>/` with
@@ -118,7 +119,7 @@ It never writes to `~/.codex`.
 
 ## Paseo Desktop
 
-After the fork exists at `~/projects/supervisors/paseo`:
+After the stable checkout exists at `~/projects/supervisors/paseo`:
 
 ```bash
 paseo daemon start
@@ -166,7 +167,7 @@ judgment can change a technical decision. All role overlays currently request
 
 The lower-level scripts are maintenance interfaces used by the public
 lifecycle and are not alternate fresh-install commands. See
-[docs/operations.md](docs/operations.md) for the single-writer handoff,
+[docs/operations.md](docs/operations.md) for scope-owned parallel work and handoff,
 candidate acceptance, and maintenance runbooks. The composed evidence and
 single final Human runbook are in
 [docs/acceptance/core4.md](docs/acceptance/core4.md).

@@ -55,15 +55,15 @@ esac
 
 paseo_checkout="${PASEO_REPO_DIR:-$HOME/projects/supervisors/paseo}"
 if [[ -d "$paseo_checkout/.git" ]]; then
-  log "OK    Paseo fork   $paseo_checkout"
+  log "OK    Paseo release   $paseo_checkout"
   paseo_branch=$(awk -F'"' '/^branch = / {print $2; exit}' "$REPO_ROOT/paseo/source.toml")
   paseo_commit=$(awk -F'"' '/^verified_commit = / {print $2}' "$REPO_ROOT/paseo/source.toml")
-  paseo_fork=$(awk -F'"' '/^fork = / {print $2}' "$REPO_ROOT/paseo/source.toml")
-  paseo_upstream=$(awk -F'"' '/^upstream = / {print $2}' "$REPO_ROOT/paseo/source.toml")
+  paseo_source=$(awk -F'"' '/^url = / {print $2}' "$REPO_ROOT/paseo/source.toml")
+  paseo_tag=$(awk -F'"' '/^release_tag = / {print $2; exit}' "$REPO_ROOT/paseo/source.toml")
+  actual_tag_commit=$(git -C "$paseo_checkout" rev-parse "refs/tags/$paseo_tag^{commit}" 2>/dev/null || true)
   actual_branch=$(git -C "$paseo_checkout" branch --show-current)
   actual_commit=$(git -C "$paseo_checkout" rev-parse HEAD)
   actual_origin=$(git -C "$paseo_checkout" remote get-url origin 2>/dev/null || true)
-  actual_upstream=$(git -C "$paseo_checkout" remote get-url upstream 2>/dev/null || true)
   tracking_remote=$(git -C "$paseo_checkout" config --get "branch.$paseo_branch.remote" || true)
   tracking_merge=$(git -C "$paseo_checkout" config --get "branch.$paseo_branch.merge" || true)
   remote_names=$(git -C "$paseo_checkout" remote | LC_ALL=C sort | tr '\n' ' ')
@@ -71,11 +71,11 @@ if [[ -d "$paseo_checkout/.git" ]]; then
   for check_pair in \
     "branch|$paseo_branch|$actual_branch" \
     "commit|$paseo_commit|$actual_commit" \
-    "origin|$paseo_fork|$actual_origin" \
-    "upstream|$paseo_upstream|$actual_upstream" \
+    "release-tag|$paseo_commit|$actual_tag_commit" \
+    "origin|$paseo_source|$actual_origin" \
     "tracking|origin|$tracking_remote" \
     "tracking-ref|refs/heads/$paseo_branch|$tracking_merge" \
-    "remote-set|origin upstream |$remote_names"; do
+    "remote-set|origin |$remote_names"; do
     IFS='|' read -r label expected actual <<<"$check_pair"
     if [[ "$actual" == "$expected" ]]; then
       log "OK    Paseo $label  $actual"
@@ -85,7 +85,7 @@ if [[ -d "$paseo_checkout/.git" ]]; then
     fi
   done
 else
-  log "WARN  Paseo fork   not found at $paseo_checkout"
+  log "WARN  Paseo release   not found at $paseo_checkout"
   warnings=$((warnings + 1))
 fi
 

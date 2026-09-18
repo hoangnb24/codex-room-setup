@@ -4,9 +4,9 @@ source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/common.sh"
 
 preflight=false
 [[ "${1:-}" == "--preflight" ]] && preflight=true
-[[ "$#" -le 1 ]] || die "Usage: scripts/install-paseo-fork [--preflight]"
-fork_url="${PASEO_FORK_URL:-$(awk -F'"' '/^fork = / {print $2; exit}' "$REPO_ROOT/paseo/source.toml")}"
-upstream_url="${PASEO_UPSTREAM_URL:-$(awk -F'"' '/^upstream = / {print $2; exit}' "$REPO_ROOT/paseo/source.toml")}"
+[[ "$#" -eq 0 || ( "$#" -eq 1 && "$1" == --preflight ) ]] || die "Usage: scripts/install-paseo [--preflight]"
+source_url="${PASEO_SOURCE_URL:-$(awk -F'"' '/^url = / {print $2; exit}' "$REPO_ROOT/paseo/source.toml")}"
+release_tag="${PASEO_RELEASE_TAG:-$(awk -F'"' '/^release_tag = / {print $2; exit}' "$REPO_ROOT/paseo/source.toml")}"
 target="${PASEO_REPO_DIR:-$HOME/projects/supervisors/paseo}"
 branch="${PASEO_BRANCH:-$(awk -F'"' '/^branch = / {print $2; exit}' "$REPO_ROOT/paseo/source.toml")}"
 verified_commit="${PASEO_VERIFIED_COMMIT:-$(awk -F'"' '/^verified_commit = / {print $2; exit}' "$REPO_ROOT/paseo/source.toml")}"
@@ -19,8 +19,10 @@ coordinator_managed="${PASEO_COORDINATOR_MANAGED:-0}"
 require_command git
 require_command "$npm_bin"
 [[ "$verified_commit" =~ ^[0-9a-f]{40}$ ]] || die "invalid audited Paseo commit: $verified_commit"
-remote_head=$(git ls-remote "$fork_url" "refs/heads/$branch" | awk 'NR == 1 {print $1}')
-[[ "$remote_head" == "$verified_commit" ]] || die "fork $branch is not the audited commit (expected $verified_commit, found ${remote_head:-missing})"
+[[ "$release_tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || die "Paseo release tag must be stable vMAJOR.MINOR.PATCH"
+remote_refs=$(git ls-remote "$source_url" "refs/tags/$release_tag" "refs/tags/$release_tag^{}")
+remote_head=$(printf '%s\n' "$remote_refs" | awk '{if ($2 ~ /\^\{\}$/) peeled=$1; else tag=$1} END {print peeled ? peeled : tag}')
+[[ "$remote_head" == "$verified_commit" ]] || die "release $release_tag does not match audited commit (expected $verified_commit, found ${remote_head:-missing})"
 
 check_hooks() {
   local repo="$1" hook
@@ -83,10 +85,9 @@ build_checked() {
 stage_exact() {
   local destination="$1"
   git init -q "$destination"
-  git -C "$destination" remote add origin "$fork_url"
-  git -C "$destination" remote add upstream "$upstream_url"
-  git -C "$destination" fetch --quiet --no-tags origin "$verified_commit"
-  [[ "$(git -C "$destination" rev-parse FETCH_HEAD)" == "$verified_commit" ]] || die "fetched Paseo object does not match audited commit"
+  git -C "$destination" remote add origin "$source_url"
+  git -C "$destination" fetch --quiet --no-tags origin "refs/tags/$release_tag:refs/tags/$release_tag"
+  [[ "$(git -C "$destination" rev-parse "FETCH_HEAD^{commit}")" == "$verified_commit" ]] || die "fetched Paseo object does not match audited commit"
   git -C "$destination" checkout -q -b "$branch" "$verified_commit"
   git -C "$destination" config "branch.$branch.remote" origin
   git -C "$destination" config "branch.$branch.merge" "refs/heads/$branch"
@@ -98,9 +99,9 @@ stage_exact() {
 stage_history() {
   local destination="$1"
   git init -q "$destination"
-  git -C "$destination" remote add origin "$fork_url"
-  git -C "$destination" fetch --quiet --no-tags origin "$verified_commit"
-  [[ "$(git -C "$destination" rev-parse FETCH_HEAD)" == "$verified_commit" ]] || die "fetched Paseo object does not match audited commit"
+  git -C "$destination" remote add origin "$source_url"
+  git -C "$destination" fetch --quiet --no-tags origin "refs/tags/$release_tag:refs/tags/$release_tag"
+  [[ "$(git -C "$destination" rev-parse "FETCH_HEAD^{commit}")" == "$verified_commit" ]] || die "fetched Paseo object does not match audited commit"
 }
 
 validate_existing_target() {
@@ -117,20 +118,27 @@ validate_existing_target() {
   upstream=$(git -C "$repo" remote get-url upstream 2>/dev/null || true)
   legacy=$(git -C "$repo" remote get-url hoangnb24 2>/dev/null || true)
   remote_names=$(git -C "$repo" remote | LC_ALL=C sort | tr '\n' ' ')
-  tracking_remote=$(git -C "$repo" config --get "branch.$branch.remote" 2>/dev/null || true)
-  tracking_merge=$(git -C "$repo" config --get "branch.$branch.merge" 2>/dev/null || true)
-  if [[ "$remote_names" == "origin upstream " && "$origin" == "$fork_url" && "$upstream" == "$upstream_url" && -z "$legacy" && "$tracking_remote" == origin && "$tracking_merge" == "refs/heads/$branch" ]]; then
-    remote_mode=normalized
-  elif [[ "$remote_names" == "hoangnb24 origin " && "$origin" == "$upstream_url" && -z "$upstream" && "$legacy" == "$fork_url" && "$tracking_remote" == origin && "$tracking_merge" == "refs/heads/$branch" ]]; then
+  tracking_remote=$(git -C "$repo" config "branch.$branch.remote" 2>/dev/null || true)
+  tracking_merge=$(git -C "$repo" config "branch.$branch.merge" 2>/dev/null || true)
+  remote_mode=normalized
+  if [[ "$remote_names" == "origin " && "$origin" == "$source_url" ]]; then
+    :
+  elif [[ "$remote_names" == "origin upstream " && "$origin" == git@github.com:hoangnb24/paseo.git && "$upstream" == git@github.com:getpaseo/paseo.git ]]; then
+    remote_mode=fork
+  elif [[ "$remote_names" == "hoangnb24 origin " && "$origin" == git@github.com:getpaseo/paseo.git && "$legacy" == git@github.com:hoangnb24/paseo.git ]]; then
     remote_mode=legacy
   else
-    die "unknown Paseo remote topology; expected origin=fork/upstream=public (or exact legacy origin=public/hoangnb24=fork)"
+    die "unknown Paseo remote topology; expected origin=official source or the recognized Room fork"
   fi
+  [[ "$tracking_remote" == origin && "$tracking_merge" == "refs/heads/$branch" ]] || die "unexpected Paseo branch tracking"
 
   old_commit=$(git -C "$repo" rev-parse HEAD)
-  if [[ "$old_commit" != "$verified_commit" ]]; then
+  if [[ "$remote_mode" != normalized ]]; then
+    [[ "$old_commit" == 8511089eaeb06cddd049b629562926822020de5c ]] || die "fork checkout differs from the recognized Room baseline"
+    [[ "$preflight" == true || "$coordinator_managed" == 1 ]] || die "use ./install --apply to migrate the fork with a transactional backup"
+  elif [[ "$old_commit" != "$verified_commit" ]]; then
     git -C "$history_repo" fetch --quiet --no-tags "$repo" "$old_commit"
-    fetched_existing=$(git -C "$history_repo" rev-parse FETCH_HEAD)
+    fetched_existing=$(git -C "$history_repo" rev-parse "FETCH_HEAD^{commit}")
     [[ "$fetched_existing" == "$old_commit" ]] || die "could not inspect existing Paseo HEAD without mutation"
     git -C "$history_repo" merge-base --is-ancestor "$old_commit" "$verified_commit" || die "Paseo checkout is ahead or divergent from audited commit"
   fi
@@ -171,7 +179,7 @@ if [[ ! -e "$target" && ! -L "$target" ]]; then
   stage_exact "$stage_root/checkout"
   mv "$stage_root/checkout" "$target"
   publish_cli_link
-  log "PASEO_FORK_READY"
+  log "PASEO_RELEASE_READY"
   exit 0
 fi
 
@@ -179,27 +187,33 @@ validation_root=$(mktemp -d "${TMPDIR:-/tmp}/paseo-existing-validation.XXXXXX")
 trap 'rm -rf "$validation_root"' EXIT
 stage_history "$validation_root/history"
 validate_existing_target "$target" "$validation_root/history"
-git -C "$target" fetch --quiet --no-tags "$fork_url" "$verified_commit"
-[[ "$(git -C "$target" rev-parse FETCH_HEAD)" == "$verified_commit" ]] || die "fetched Paseo object does not match audited commit"
+git -C "$target" fetch --quiet --no-tags "$source_url" "refs/tags/$release_tag"
+[[ "$(git -C "$target" rev-parse "FETCH_HEAD^{commit}")" == "$verified_commit" ]] || die "fetched Paseo object does not match audited commit"
 [[ "$(git -C "$target" rev-parse HEAD)" == "$old_commit" ]] || die "Paseo HEAD changed after validation; retry"
 if [[ "$old_commit" != "$verified_commit" ]]; then
   git -C "$target" update-ref "refs/heads/$branch" "$verified_commit" "$old_commit"
   if ! git -C "$target" restore --source="$verified_commit" --staged --worktree -- .; then
     git -C "$target" update-ref "refs/heads/$branch" "$old_commit" "$verified_commit"
     git -C "$target" restore --source="$old_commit" --staged --worktree -- .
-    die "could not materialize audited Paseo fast-forward"
+    die "could not materialize audited Paseo release"
   fi
 fi
-if [[ "$remote_mode" == legacy ]]; then
-  git -C "$target" remote rename origin upstream
-  git -C "$target" remote rename hoangnb24 origin
+if [[ "$remote_mode" != normalized ]]; then
+  if [[ "$remote_mode" == legacy ]]; then
+    git -C "$target" remote remove hoangnb24
+  else
+    git -C "$target" remote remove upstream
+  fi
+  git -C "$target" remote remove origin
+  git -C "$target" remote add origin "$source_url"
 fi
+git -C "$target" update-ref "refs/tags/$release_tag" "$(git -C "$target" rev-parse FETCH_HEAD)"
 git -C "$target" config "branch.$branch.remote" origin
 git -C "$target" config "branch.$branch.merge" "refs/heads/$branch"
 npm_ci_checked "$target"
 build_checked "$target"
 [[ -z "$(git -C "$target" status --porcelain --untracked-files=no)" ]] || die "Paseo lifecycle changed tracked files"
 publish_cli_link
-log "PASEO_FORK_READY"
+log "PASEO_RELEASE_READY"
 log "path=$target"
 log "commit=$(git -C "$target" rev-parse HEAD)"

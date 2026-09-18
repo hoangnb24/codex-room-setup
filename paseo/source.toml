@@ -1,9 +1,9 @@
 [repository]
-fork = "git@github.com:hoangnb24/paseo.git"
-upstream = "git@github.com:getpaseo/paseo.git"
+url = "https://github.com/getpaseo/paseo.git"
+release_tag = "v0.8.0"
 branch = "main"
-verified_commit = "8511089eaeb06cddd049b629562926822020de5c"
-verified_describe = "v0.7.0-beta.1-13-g8511089ea"
+verified_commit = "b8e24677e12b226c7c38c1c3a40649daa9f1152f"
+verified_describe = "v0.8.0"
 
 [install]
 target = "~/projects/supervisors/paseo"

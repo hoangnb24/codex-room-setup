@@ -16,7 +16,9 @@ they are not alternate fresh-install workflows.
 The three roles have distinct authority. Human keeps product, cost, external
 effect, and irreversible-risk decisions. Supervisor observes and routes Human
 intent. Lead owns the project's technical decision and acceptance. Lead may
-have one writable Peer at a time; a Peer owns one bounded outcome and returns
+run writable Peers in parallel only with verified, accepted inputs and separate
+write scopes. Each moving scope has one owner; shared file or interface changes
+are sequenced against agreed contracts. A Peer owns one bounded outcome and returns
 an immutable candidate or a concrete premise, dependency, or block signal.
 
 ## Run a bounded project handoff
@@ -50,12 +52,13 @@ interrupt running agents. The source contract keeps exactly three room
 providers and injects Paseo MCP into Supervisor and Lead only. A live provider
 inventory still needs an operator check with a running daemon.
 
-## Update the local fork
+## Update the stable Paseo release
 
 Run `paseo-local-update` only when no important agent turn or Desktop operation
-is active. It verifies the audited owner-fork branch ref, requires normalized
+is active. It verifies the audited official stable release tag, requires normalized
 remotes/tracking plus a clean tracked/index state, and permits only an exact-pin
-no-op or clean fast-forward to that immutable commit. It refuses detached,
+no-op or clean fast-forward to that immutable commit. Run `./install --apply`
+first to migrate the recognized old fork; the public installer backs it up. It refuses detached,
 dirty, ahead/divergent, custom-topology, custom-hook, and lock-integrity
 states; then it runs `npm ci`, builds, replaces the app, and restarts the
 daemon. It never pulls, rebases, resets, or merges automatically.

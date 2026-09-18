@@ -10,9 +10,11 @@ require_command jq
 jq -e '
   ([.agents.providers | keys[] | select(startswith("codex-"))] | sort) ==
     ["codex-lead", "codex-peer", "codex-supervisor"] and
-  .daemon.mcp.injectIntoProviders == ["codex-supervisor", "codex-lead"]
+  .daemon.mcp.injectIntoAgents == true
 ' "$HOME/.paseo/config.json" >/dev/null ||
   die "installed Paseo config does not have the exact three-role contract"
+
+jq -e -f "$REPO_ROOT/scripts/lib/paseo-tools.jq" "$HOME/.paseo/config.json" >/dev/null || die "unexpected Paseo tool policy"
 
 export_one() {
   local source_path="$1"

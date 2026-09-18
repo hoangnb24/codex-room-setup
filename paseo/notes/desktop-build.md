@@ -2,9 +2,9 @@
 
 `paseo-local-update` performs the local macOS flow:
 
-1. Validate the exact owner-fork branch/commit, normalized remotes, tracking,
+1. Validate the official stable release tag/commit, normalized remotes, tracking,
    clean tracked/index state, lockfile, and lifecycle-hook policy.
-2. Fetch the immutable commit directly and allow only an exact-pin no-op or a
+2. Fetch the stable tag and verify its immutable commit and allow only an exact-pin no-op or a
    clean fast-forward to it. No pull, merge, rebase, or reset is used.
 3. Run `npm ci` and prove `package-lock.json` is unchanged.
 4. Build the architecture-specific Desktop directory bundle.

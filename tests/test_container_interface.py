@@ -35,7 +35,7 @@ class ContainerAcceptanceInterfaceTests(unittest.TestCase):
         signals = (
             "lead peer supervisor",
             'codex-lead","codex-peer","codex-supervisor',
-            'codex-supervisor","codex-lead',
+            'codex-lead","codex-supervisor',
             "for legacy_role in review harness",
             'review/sessions/private.jsonl',
             'harness/state.sqlite',

@@ -40,6 +40,7 @@ class SetupShapeTests(unittest.TestCase):
         subprocess.run(["git", "-C", str(work), "add", "."], check=True)
         subprocess.run(["git", "-C", str(work), "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "-qm", "two"], check=True)
         second = subprocess.run(["git", "-C", str(work), "rev-parse", "HEAD"], check=True, capture_output=True, text=True).stdout.strip()
+        subprocess.run(["git", "-C", str(work), "tag", "v0.8.0"], check=True)
         subprocess.run(["git", "clone", "-q", "--bare", str(work), str(remote)], check=True)
         return remote, first, second
 
@@ -66,7 +67,7 @@ class SetupShapeTests(unittest.TestCase):
         env = os.environ.copy()
         env.update({
             "HOME": str(home), "PASEO_REPO_DIR": str(target),
-            "PASEO_FORK_URL": str(remote), "PASEO_UPSTREAM_URL": str(remote) + "-upstream",
+            "PASEO_SOURCE_URL": str(remote), "PASEO_RELEASE_TAG": "v0.8.0",
             "PASEO_BRANCH": "main", "PASEO_VERIFIED_COMMIT": commit,
             "PASEO_NPM_BIN": str(npm), "NPM_LOG": str(home.parent / "npm.log"),
         })
@@ -89,11 +90,9 @@ class SetupShapeTests(unittest.TestCase):
             room_roles,
             ["codex-lead", "codex-peer", "codex-supervisor"],
         )
-        self.assertEqual(
-            config["daemon"]["mcp"]["injectIntoProviders"],
-            ["codex-supervisor", "codex-lead"],
-        )
-        self.assertNotIn("codex-peer", config["daemon"]["mcp"]["injectIntoProviders"])
+        self.assertNotIn("injectIntoProviders", config["daemon"]["mcp"])
+        for name, provider in config["agents"]["providers"].items():
+            self.assertEqual(provider["paseoTools"]["enabled"], name in ("codex-supervisor", "codex-lead"))
         self.assertIn("without Paseo orchestration tools", providers["codex-peer"]["description"])
         self.assertIn(
             "Do not spawn, manage, or coordinate other agents",
@@ -155,7 +154,7 @@ class SetupShapeTests(unittest.TestCase):
             self.assertIn(str(fake_home / ".local" / "bin" / "codex-room"), paseo_config.read_text())
             protocol = fake_home / ".config" / "codex-room" / "workflow" / "WORKSPACE_PROTOCOL.md"
             self.assertTrue(protocol.is_file())
-            self.assertIn("Lead keeps at most one active", protocol.read_text())
+            self.assertIn("only with verified, accepted inputs and separate write scopes", protocol.read_text())
             self.assertFalse((fake_home / ".config/codex-room/workflow/ANTI_PATTERNS.md").exists())
             self.assertFalse((fake_home / ".config/codex-room/workflow/SUPERVISOR_NOTEBOOK.md").exists())
             notebook = fake_home / ".config" / "codex-room" / "workflow" / "SUPERVISOR_NOTEBOOK.md"
@@ -251,7 +250,7 @@ class SetupShapeTests(unittest.TestCase):
             remote, first, second = self.make_paseo_remote(root)
             npm = self.fake_npm(root)
             env = self.paseo_env(home, remote, target, second, npm)
-            subprocess.run([str(ROOT / "scripts" / "install-paseo-fork")], check=True, env=env, capture_output=True, text=True)
+            subprocess.run([str(ROOT / "scripts" / "install-paseo")], check=True, env=env, capture_output=True, text=True)
             self.assertEqual(subprocess.run(["git", "-C", str(target), "rev-parse", "HEAD"], check=True, capture_output=True, text=True).stdout.strip(), second)
             link = home / ".local" / "bin" / "paseo"
             self.assertTrue(link.is_symlink())
@@ -261,7 +260,7 @@ class SetupShapeTests(unittest.TestCase):
             self.assertTrue((target / "packages/server/dist/scripts/supervisor-entrypoint.js").is_file())
 
             wrong_target = root / "wrong"
-            failed = subprocess.run([str(ROOT / "scripts" / "install-paseo-fork")], env=self.paseo_env(home, remote, wrong_target, first, npm), capture_output=True, text=True)
+            failed = subprocess.run([str(ROOT / "scripts" / "install-paseo")], env=self.paseo_env(home, remote, wrong_target, first, npm), capture_output=True, text=True)
             self.assertNotEqual(failed.returncode, 0)
             self.assertFalse(wrong_target.exists())
 
@@ -272,7 +271,7 @@ class SetupShapeTests(unittest.TestCase):
             npm = self.fake_npm(root)
             env = {**self.paseo_env(home, remote, target, second, npm), "NPM_FAIL_BUILD": "1"}
             failed = subprocess.run(
-                [str(ROOT / "scripts/install-paseo-fork")],
+                [str(ROOT / "scripts/install-paseo")],
                 env=env, capture_output=True, text=True,
             )
             self.assertNotEqual(failed.returncode, 0)
@@ -291,7 +290,7 @@ class SetupShapeTests(unittest.TestCase):
                 npm = self.fake_npm(root)
                 env = {**self.paseo_env(home, remote, target, second, npm), flag: "1"}
                 failed = subprocess.run(
-                    [str(ROOT / "scripts/install-paseo-fork")],
+                    [str(ROOT / "scripts/install-paseo")],
                     env=env, capture_output=True, text=True,
                 )
                 self.assertNotEqual(failed.returncode, 0)
@@ -308,7 +307,6 @@ class SetupShapeTests(unittest.TestCase):
                 target = root / name
                 subprocess.run(["git", "clone", "-q", str(remote), str(target)], check=True)
                 subprocess.run(["git", "-C", str(target), "checkout", "-q", "-B", "main", commit], check=True)
-                subprocess.run(["git", "-C", str(target), "remote", "add", "upstream", str(remote) + "-upstream"], check=True)
                 subprocess.run(["git", "-C", str(target), "config", "branch.main.remote", "origin"], check=True)
                 return target, self.paseo_env(home, remote, target, second, npm)
 
@@ -326,7 +324,7 @@ class SetupShapeTests(unittest.TestCase):
 
             fresh = root / "not-created"
             subprocess.run(
-                [str(ROOT / "scripts/install-paseo-fork"), "--preflight"],
+                [str(ROOT / "scripts/install-paseo"), "--preflight"],
                 check=True, env=self.paseo_env(home, remote, fresh, second, npm),
                 capture_output=True, text=True,
             )
@@ -334,14 +332,14 @@ class SetupShapeTests(unittest.TestCase):
 
             ancestor, ancestor_env = clone("ancestor")
             ancestor_before = snapshot(ancestor)
-            subprocess.run([str(ROOT / "scripts/install-paseo-fork"), "--preflight"], check=True, env=ancestor_env, capture_output=True, text=True)
+            subprocess.run([str(ROOT / "scripts/install-paseo"), "--preflight"], check=True, env=ancestor_env, capture_output=True, text=True)
             self.assertEqual(snapshot(ancestor), ancestor_before)
 
             preflight_build_failure, preflight_failure_env = clone("preflight-build-failure")
             preflight_failure_before = snapshot(preflight_build_failure)
             preflight_failure_env = {**preflight_failure_env, "NPM_FAIL_BUILD": "1"}
             failed_preflight = subprocess.run(
-                [str(ROOT / "scripts/install-paseo-fork"), "--preflight"],
+                [str(ROOT / "scripts/install-paseo"), "--preflight"],
                 env=preflight_failure_env, capture_output=True, text=True,
             )
             self.assertNotEqual(failed_preflight.returncode, 0)
@@ -360,7 +358,7 @@ class SetupShapeTests(unittest.TestCase):
                     target, env = clone(name)
                     mutate(target)
                     before = snapshot(target)
-                    completed = subprocess.run([str(ROOT / "scripts/install-paseo-fork"), "--preflight"], env=env, capture_output=True, text=True)
+                    completed = subprocess.run([str(ROOT / "scripts/install-paseo"), "--preflight"], env=env, capture_output=True, text=True)
                     self.assertNotEqual(completed.returncode, 0)
                     self.assertEqual(snapshot(target), before)
 
@@ -371,14 +369,14 @@ class SetupShapeTests(unittest.TestCase):
                     subprocess.run(["git", "-C", str(target), "add", "."], check=True)
                     subprocess.run(["git", "-C", str(target), "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "-qm", name], check=True)
                     before = snapshot(target)
-                    completed = subprocess.run([str(ROOT / "scripts/install-paseo-fork"), "--preflight"], env=env, capture_output=True, text=True)
+                    completed = subprocess.run([str(ROOT / "scripts/install-paseo"), "--preflight"], env=env, capture_output=True, text=True)
                     self.assertNotEqual(completed.returncode, 0)
                     self.assertEqual(snapshot(target), before)
 
             invalid = root / "invalid-target"
             invalid.write_text("operator file\n")
             completed = subprocess.run(
-                [str(ROOT / "scripts/install-paseo-fork"), "--preflight"],
+                [str(ROOT / "scripts/install-paseo"), "--preflight"],
                 env=self.paseo_env(home, remote, invalid, second, npm),
                 capture_output=True, text=True,
             )
@@ -390,7 +388,7 @@ class SetupShapeTests(unittest.TestCase):
             linked_target.symlink_to(real_target, target_is_directory=True)
             real_before = snapshot(real_target)
             completed = subprocess.run(
-                [str(ROOT / "scripts/install-paseo-fork"), "--preflight"],
+                [str(ROOT / "scripts/install-paseo"), "--preflight"],
                 env=self.paseo_env(home, remote, linked_target, second, npm),
                 capture_output=True, text=True,
             )
@@ -408,7 +406,7 @@ class SetupShapeTests(unittest.TestCase):
             cli_link.symlink_to("missing-operator-target")
             env = self.paseo_env(home, remote, target, second, npm)
             env["PASEO_CLI_LINK"] = str(cli_link)
-            subprocess.run([str(ROOT / "scripts/install-paseo-fork")], check=True, env=env, capture_output=True, text=True)
+            subprocess.run([str(ROOT / "scripts/install-paseo")], check=True, env=env, capture_output=True, text=True)
             self.assertTrue(cli_link.is_symlink())
             self.assertEqual(os.readlink(cli_link), str(target / "packages/cli/bin/paseo"))
             backup_dirs = list((home / ".codex-room-backups").glob("paseo-cli-*"))
@@ -427,40 +425,39 @@ class SetupShapeTests(unittest.TestCase):
                 target = root / name
                 subprocess.run(["git", "clone", "-q", str(remote), str(target)], check=True)
                 subprocess.run(["git", "-C", str(target), "checkout", "-q", "-B", "main", commit], check=True)
-                subprocess.run(["git", "-C", str(target), "remote", "add", "upstream", str(remote) + "-upstream"], check=True)
                 subprocess.run(["git", "-C", str(target), "config", "branch.main.remote", "origin"], check=True)
                 return target, self.paseo_env(home, remote, target, second, npm)
 
             target, env = clone("ff")
             (target / ".codex").mkdir()
-            subprocess.run([str(ROOT / "scripts" / "install-paseo-fork")], check=True, env=env, capture_output=True, text=True)
+            subprocess.run([str(ROOT / "scripts" / "install-paseo")], check=True, env=env, capture_output=True, text=True)
             self.assertEqual(subprocess.run(["git", "-C", str(target), "rev-parse", "HEAD"], check=True, capture_output=True, text=True).stdout.strip(), second)
             self.assertTrue((target / ".codex").is_dir())
             before = subprocess.run(["git", "-C", str(target), "rev-parse", "HEAD"], check=True, capture_output=True, text=True).stdout.strip()
-            subprocess.run([str(ROOT / "scripts" / "install-paseo-fork")], check=True, env=env, capture_output=True, text=True)
+            subprocess.run([str(ROOT / "scripts" / "install-paseo")], check=True, env=env, capture_output=True, text=True)
             self.assertEqual(before, subprocess.run(["git", "-C", str(target), "rev-parse", "HEAD"], check=True, capture_output=True, text=True).stdout.strip())
             for artifact in (
                 target / "packages/cli/dist/index.js",
                 target / "packages/server/dist/scripts/supervisor-entrypoint.js",
             ):
                 artifact.unlink()
-            subprocess.run([str(ROOT / "scripts" / "install-paseo-fork")], check=True, env=env, capture_output=True, text=True)
+            subprocess.run([str(ROOT / "scripts" / "install-paseo")], check=True, env=env, capture_output=True, text=True)
             self.assertTrue((target / "packages/cli/dist/index.js").is_file())
             self.assertTrue((target / "packages/server/dist/scripts/supervisor-entrypoint.js").is_file())
 
             dirty, dirty_env = clone("dirty")
             (dirty / "package.json").write_text("dirty\n")
-            failed = subprocess.run([str(ROOT / "scripts" / "install-paseo-fork")], env=dirty_env, capture_output=True, text=True)
+            failed = subprocess.run([str(ROOT / "scripts" / "install-paseo")], env=dirty_env, capture_output=True, text=True)
             self.assertNotEqual(failed.returncode, 0)
             self.assertEqual(subprocess.run(["git", "-C", str(dirty), "rev-parse", "HEAD"], check=True, capture_output=True, text=True).stdout.strip(), first)
 
             detached, detached_env = clone("detached")
             subprocess.run(["git", "-C", str(detached), "checkout", "-q", "--detach", first], check=True)
-            self.assertNotEqual(subprocess.run([str(ROOT / "scripts" / "install-paseo-fork")], env=detached_env).returncode, 0)
+            self.assertNotEqual(subprocess.run([str(ROOT / "scripts" / "install-paseo")], env=detached_env).returncode, 0)
 
             custom, custom_env = clone("custom")
             subprocess.run(["git", "-C", str(custom), "remote", "set-url", "origin", str(root / "custom.git")], check=True)
-            self.assertNotEqual(subprocess.run([str(ROOT / "scripts" / "install-paseo-fork")], env=custom_env).returncode, 0)
+            self.assertNotEqual(subprocess.run([str(ROOT / "scripts" / "install-paseo")], env=custom_env).returncode, 0)
             self.assertEqual(subprocess.run(["git", "-C", str(custom), "remote", "get-url", "origin"], check=True, capture_output=True, text=True).stdout.strip(), str(root / "custom.git"))
 
             divergent, divergent_env = clone("divergent")
@@ -468,44 +465,40 @@ class SetupShapeTests(unittest.TestCase):
             subprocess.run(["git", "-C", str(divergent), "add", "."], check=True)
             subprocess.run(["git", "-C", str(divergent), "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "-qm", "local"], check=True)
             divergent_head = subprocess.run(["git", "-C", str(divergent), "rev-parse", "HEAD"], check=True, capture_output=True, text=True).stdout.strip()
-            self.assertNotEqual(subprocess.run([str(ROOT / "scripts" / "install-paseo-fork")], env=divergent_env).returncode, 0)
+            self.assertNotEqual(subprocess.run([str(ROOT / "scripts" / "install-paseo")], env=divergent_env).returncode, 0)
             self.assertEqual(subprocess.run(["git", "-C", str(divergent), "rev-parse", "HEAD"], check=True, capture_output=True, text=True).stdout.strip(), divergent_head)
 
-    def test_paseo_exact_legacy_migration_and_hook_lock_contract(self) -> None:
+    def test_paseo_hook_lock_contract(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary); home = root / "home"; remote, _, second = self.make_paseo_remote(root); npm = self.fake_npm(root)
             target = root / "legacy"
             subprocess.run(["git", "clone", "-q", str(remote), str(target)], check=True)
-            subprocess.run(["git", "-C", str(target), "remote", "rename", "origin", "hoangnb24"], check=True)
-            subprocess.run(["git", "-C", str(target), "remote", "add", "origin", str(remote) + "-upstream"], check=True)
-            subprocess.run(["git", "-C", str(target), "config", "branch.main.remote", "origin"], check=True)
             env = self.paseo_env(home, remote, target, second, npm)
-            subprocess.run([str(ROOT / "scripts" / "install-paseo-fork")], check=True, env=env, capture_output=True, text=True)
+            subprocess.run([str(ROOT / "scripts" / "install-paseo")], check=True, env=env, capture_output=True, text=True)
             self.assertEqual(subprocess.run(["git", "-C", str(target), "remote", "get-url", "origin"], check=True, capture_output=True, text=True).stdout.strip(), str(remote))
-            self.assertEqual(subprocess.run(["git", "-C", str(target), "remote", "get-url", "upstream"], check=True, capture_output=True, text=True).stdout.strip(), str(remote) + "-upstream")
 
             (target / ".git/hooks/pre-push").write_text("#!/bin/sh\necho custom\n")
             before_log = (root / "npm.log").read_text()
-            self.assertNotEqual(subprocess.run([str(ROOT / "scripts" / "install-paseo-fork")], env=env).returncode, 0)
+            self.assertNotEqual(subprocess.run([str(ROOT / "scripts" / "install-paseo")], env=env).returncode, 0)
             self.assertEqual((root / "npm.log").read_text(), before_log)
 
             (target / ".git/hooks/pre-push").unlink()
             changing_npm = self.fake_npm(root / "changing", change_lock=True)
             changing_env = self.paseo_env(home, remote, target, second, changing_npm)
-            self.assertNotEqual(subprocess.run([str(ROOT / "scripts" / "install-paseo-fork")], env=changing_env).returncode, 0)
+            self.assertNotEqual(subprocess.run([str(ROOT / "scripts" / "install-paseo")], env=changing_env).returncode, 0)
 
-    def test_fork_provenance_and_update_sources_are_explicit(self) -> None:
+    def test_release_provenance_and_update_sources_are_explicit(self) -> None:
         paseo_source = (ROOT / "paseo" / "source.toml").read_text()
         updater = (HOME_MIRROR / ".local" / "bin" / "paseo-local-update").read_text()
 
-        self.assertIn('fork = "git@github.com:hoangnb24/paseo.git"', paseo_source)
+        self.assertIn('url = "https://github.com/getpaseo/paseo.git"', paseo_source)
         self.assertIn(
-            'verified_commit = "8511089eaeb06cddd049b629562926822020de5c"',
+            'verified_commit = "b8e24677e12b226c7c38c1c3a40649daa9f1152f"',
             paseo_source,
         )
         for forbidden in ("git pull", "git rebase", "git reset", "npm install"):
             self.assertNotIn(forbidden, updater)
-        self.assertIn('git ls-remote "$PASEO_FORK_URL"', updater)
+        self.assertIn('git ls-remote "$PASEO_SOURCE_URL"', updater)
         self.assertIn('"$NPM_BIN" ci', updater)
         self.assertIn("PASEO_VERIFIED_COMMIT", updater)
 
@@ -515,7 +508,6 @@ class SetupShapeTests(unittest.TestCase):
             remote, first, second = self.make_paseo_remote(root)
             subprocess.run(["git", "clone", "-q", str(remote), str(target)], check=True)
             subprocess.run(["git", "-C", str(target), "checkout", "-q", "-B", "main", first], check=True)
-            subprocess.run(["git", "-C", str(target), "remote", "add", "upstream", str(remote) + "-upstream"], check=True)
             subprocess.run(["git", "-C", str(target), "config", "branch.main.remote", "origin"], check=True)
             npm = self.fake_npm(root)
             env = self.paseo_env(home, remote, target, first, npm)
@@ -540,8 +532,7 @@ class SetupShapeTests(unittest.TestCase):
             subprocess.run(["git", "init", "-q", "-b", "main", str(paseo)], check=True)
             subprocess.run(["git", "-C", str(paseo), "add", "."], check=True)
             subprocess.run(["git", "-C", str(paseo), "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "-qm", "fixture"], check=True)
-            subprocess.run(["git", "-C", str(paseo), "remote", "add", "origin", "git@github.com:hoangnb24/paseo.git"], check=True)
-            subprocess.run(["git", "-C", str(paseo), "remote", "add", "upstream", "git@github.com:getpaseo/paseo.git"], check=True)
+            subprocess.run(["git", "-C", str(paseo), "remote", "add", "origin", "https://github.com/getpaseo/paseo.git"], check=True)
             subprocess.run(["git", "-C", str(paseo), "config", "branch.main.remote", "origin"], check=True)
             subprocess.run(["git", "-C", str(paseo), "config", "branch.main.merge", "refs/heads/main"], check=True)
             link = home / ".local/bin/paseo"
@@ -566,8 +557,8 @@ class SetupShapeTests(unittest.TestCase):
             self.executable(
                 bin_dir / "git",
                 "#!/bin/sh\n"
-                "if [ \"$1\" = -C ] && [ \"$3\" = rev-parse ] && [ \"$4\" = HEAD ]; then\n"
-                " case \"$2\" in \"$PASEO_REPO_DIR\") echo 8511089eaeb06cddd049b629562926822020de5c ;; *) exec /usr/bin/git \"$@\" ;; esac\n"
+                "if [ \"$1\" = -C ] && [ \"$3\" = rev-parse ]; then\n"
+                " case \"$2\" in \"$PASEO_REPO_DIR\") echo b8e24677e12b226c7c38c1c3a40649daa9f1152f ;; *) exec /usr/bin/git \"$@\" ;; esac\n"
                 "else exec /usr/bin/git \"$@\"; fi\n"
             )
             env = os.environ.copy(); env.update({
@@ -577,7 +568,7 @@ class SetupShapeTests(unittest.TestCase):
             })
             completed = subprocess.run([str(ROOT / "scripts/verify")], env=env, capture_output=True, text=True)
             self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
-            self.assertIn("OK    Paseo CLI links to local fork", completed.stdout)
+            self.assertIn("OK    Paseo CLI links to stable release", completed.stdout)
             self.assertFalse((root / "ocr.log").exists())
             self.assertEqual((runtime / "review/private").read_text(), "must remain ignored\n")
             self.assertEqual((runtime / "harness/private").read_text(), "must remain ignored\n")
@@ -722,7 +713,8 @@ class SetupShapeTests(unittest.TestCase):
             "Supervisor observes",
             "Lead owns project framing",
             "Peer owns one bounded outcome",
-            "at most one active",
+            "only with verified, accepted inputs and separate write scopes",
+            "Give every moving write scope one owner",
             "immutable candidate",
             "REOPEN_REQUEST",
             "DEPENDENCY_REQUEST",
@@ -736,7 +728,17 @@ class SetupShapeTests(unittest.TestCase):
         lead = (ROOM / "overlays" / "lead.config.toml").read_text()
         peer = (ROOM / "overlays" / "peer.config.toml").read_text()
         supervisor = (ROOM / "overlays" / "supervisor.config.toml").read_text()
-        self.assertIn("at most one active writable Peer", lead)
+        self.assertIn("Run writable Peers in parallel only", lead)
+        self.assertIn("accepted inputs and a separate write scope", lead)
+        self.assertIn("Sequence changes to shared files or interfaces", lead)
+        self.assertIn("At session resumption", lead)
+        self.assertIn("outdated task descriptions", lead)
+        self.assertIn("create a duplicate tracker", lead)
+        self.assertIn("notify Lead before making those changes", peer)
+        self.assertIn("verification environment, reproduction steps, actual results", peer)
+        self.assertIn("durable evidence locations", peer)
+        for active in (protocol, lead):
+            self.assertNotIn("at most one active", active)
         self.assertIn("fresh read-only Peer", lead)
         self.assertIn("explicitly ACCEPT or REJECT", lead)
         self.assertFalse((ROOM / "overlays" / "review.config.toml").exists())
@@ -805,8 +807,7 @@ class PublicInstallTransactionTests(unittest.TestCase):
             "mkdir -p \"$PASEO_REPO_DIR/packages/cli/bin\"\n"
             "if [ ! -d \"$PASEO_REPO_DIR/.git\" ]; then\n"
             "  git init -q -b main \"$PASEO_REPO_DIR\"\n"
-            "  git -C \"$PASEO_REPO_DIR\" remote add origin \"$PASEO_FORK_URL\"\n"
-            "  git -C \"$PASEO_REPO_DIR\" remote add upstream \"$PASEO_UPSTREAM_URL\"\n"
+            "  git -C \"$PASEO_REPO_DIR\" remote add origin \"$PASEO_SOURCE_URL\"\n"
             "  git -C \"$PASEO_REPO_DIR\" config branch.main.remote origin\n"
             "  git -C \"$PASEO_REPO_DIR\" config branch.main.merge refs/heads/main\n"
             "  git -C \"$PASEO_REPO_DIR\" -c user.name=Test -c user.email=test@example.invalid commit --allow-empty -qm bootstrap\n"
@@ -1403,6 +1404,9 @@ class RuntimeGenerationTests(unittest.TestCase):
             self.assertIn("multi_agent = false", config)
             self.assertIn("multi_agent_v2 = false", config)
             self.assertIn("[agents]\nenabled = false", config)
+            overlay = (ROOM / "overlays" / f"{role}.config.toml").read_text()
+            instructions = overlay.split('developer_instructions = """', 1)[1].rsplit('"""', 1)[0]
+            self.assertIn(instructions, config)
             for name in ("auth.json", "AGENTS.md", "hooks.json", "skills", "plugins"):
                 self.assertTrue((runtime / name).is_symlink())
                 self.assertEqual((runtime / name).resolve(), (self.canonical / name).resolve())

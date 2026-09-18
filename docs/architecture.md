@@ -26,7 +26,7 @@
 | `~/.config/codex-room` | This repository | Role overlays and the workspace protocol reference |
 | `~/.codex-runtime` | `codex-room-sync` | Generated configs plus role-local sessions and databases |
 | `~/.paseo` | Paseo | Provider config, agents, projects, worktrees, logs and identity |
-| Paseo fork checkout | Git | Source code for CLI, daemon and Desktop |
+| Paseo stable release checkout | Git | Source code for CLI, daemon and Desktop |
 
 ## Runtime merge
 

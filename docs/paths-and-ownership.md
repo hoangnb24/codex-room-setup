@@ -15,7 +15,7 @@
 
 The repository stores HOME-dependent JSON as `*.template`; `./install --apply`
 renders it to the path without `.template`. The public installer creates the
-Paseo CLI symlink after the checkout is available. `scripts/install-paseo-fork`
+Paseo CLI symlink after the checkout is available. `scripts/install-paseo`
 is a lower-level maintenance helper used by that lifecycle.
 
 ## Generated files

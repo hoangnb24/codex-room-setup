@@ -4,11 +4,7 @@
     "listen": "127.0.0.1:6767",
     "mcp": {
       "injectIntoAgents": true,
-      "enabled": true,
-      "injectIntoProviders": [
-        "codex-supervisor",
-        "codex-lead"
-      ]
+      "enabled": true
     },
     "browserTools": {
       "enabled": false
@@ -75,7 +71,10 @@
               }
             ]
           }
-        ]
+        ],
+        "paseoTools": {
+          "enabled": true
+        }
       },
       "codex-peer": {
         "extends": "codex",
@@ -91,9 +90,20 @@
         },
         "models": [
           {
+            "id": "gpt-6-astra",
+            "label": "Astra Low",
+            "isDefault": true,
+            "thinkingOptions": [
+              {
+                "id": "low",
+                "label": "Low",
+                "isDefault": true
+              }
+            ]
+          },
+          {
             "id": "gpt-5.6-sol",
             "label": "Sol Medium",
-            "isDefault": true,
             "thinkingOptions": [
               {
                 "id": "medium",
@@ -113,7 +123,10 @@
               }
             ]
           }
-        ]
+        ],
+        "paseoTools": {
+          "enabled": false
+        }
       },
       "grok": {
         "extends": "acp",
@@ -124,16 +137,28 @@
           "agent",
           "stdio"
         ],
-        "env": {}
+        "env": {},
+        "paseoTools": {
+          "enabled": false
+        }
       },
       "pi": {
-        "enabled": true
+        "enabled": true,
+        "paseoTools": {
+          "enabled": false
+        }
       },
       "opencode": {
-        "enabled": false
+        "enabled": false,
+        "paseoTools": {
+          "enabled": false
+        }
       },
       "copilot": {
-        "enabled": false
+        "enabled": false,
+        "paseoTools": {
+          "enabled": false
+        }
       },
       "hermes": {
         "extends": "acp",
@@ -143,7 +168,10 @@
           "hermes",
           "acp"
         ],
-        "env": {}
+        "env": {},
+        "paseoTools": {
+          "enabled": false
+        }
       },
       "codex-lead": {
         "extends": "codex",
@@ -159,8 +187,8 @@
         },
         "models": [
           {
-            "id": "gpt-5.6-sol",
-            "label": "Sol Medium",
+            "id": "gpt-6-astra",
+            "label": "Astra Medium",
             "isDefault": true,
             "thinkingOptions": [
               {
@@ -169,8 +197,37 @@
                 "isDefault": true
               }
             ]
+          },
+          {
+            "id": "gpt-5.6-sol",
+            "label": "Sol Medium",
+            "thinkingOptions": [
+              {
+                "id": "medium",
+                "label": "Medium",
+                "isDefault": true
+              }
+            ]
           }
-        ]
+        ],
+        "paseoTools": {
+          "enabled": true
+        }
+      },
+      "claude": {
+        "paseoTools": {
+          "enabled": false
+        }
+      },
+      "codex": {
+        "paseoTools": {
+          "enabled": false
+        }
+      },
+      "omp": {
+        "paseoTools": {
+          "enabled": false
+        }
       }
     }
   },

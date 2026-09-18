@@ -3,10 +3,10 @@ set -euo pipefail
 
 PASEO_REPO_DIR="${PASEO_REPO_DIR:-@@HOME@@/projects/supervisors/paseo}"
 PASEO_HOME_DIR="${PASEO_HOME_DIR:-@@HOME@@/.paseo}"
-PASEO_FORK_URL="${PASEO_FORK_URL:-git@github.com:hoangnb24/paseo.git}"
-PASEO_UPSTREAM_URL="${PASEO_UPSTREAM_URL:-git@github.com:getpaseo/paseo.git}"
+PASEO_SOURCE_URL="${PASEO_SOURCE_URL:-https://github.com/getpaseo/paseo.git}"
+PASEO_RELEASE_TAG="${PASEO_RELEASE_TAG:-v0.8.0}"
 PASEO_BRANCH="${PASEO_BRANCH:-main}"
-PASEO_VERIFIED_COMMIT="${PASEO_VERIFIED_COMMIT:-8511089eaeb06cddd049b629562926822020de5c}"
+PASEO_VERIFIED_COMMIT="${PASEO_VERIFIED_COMMIT:-b8e24677e12b226c7c38c1c3a40649daa9f1152f}"
 NPM_BIN="${PASEO_NPM_BIN:-npm}"
 INSTALLED_APP="${PASEO_INSTALLED_APP:-/Applications/Paseo.app}"
 
@@ -21,21 +21,23 @@ fi
 cd "$PASEO_REPO_DIR"
 [[ "$(git branch --show-current)" == "$PASEO_BRANCH" ]] || { print -u2 "Paseo must be on $PASEO_BRANCH (not detached)."; exit 1; }
 [[ -z "$(git status --porcelain --untracked-files=no)" ]] || { print -u2 "Paseo tracked files or index are dirty."; exit 1; }
-[[ "$(git remote get-url origin 2>/dev/null || true)" == "$PASEO_FORK_URL" ]] || { print -u2 "Expected origin -> $PASEO_FORK_URL"; exit 1; }
-[[ "$(git remote get-url upstream 2>/dev/null || true)" == "$PASEO_UPSTREAM_URL" ]] || { print -u2 "Expected upstream -> $PASEO_UPSTREAM_URL"; exit 1; }
+[[ "$(git remote get-url origin 2>/dev/null || true)" == "$PASEO_SOURCE_URL" ]] || { print -u2 "Expected origin -> $PASEO_SOURCE_URL"; exit 1; }
 [[ "$(git config --get branch.$PASEO_BRANCH.remote 2>/dev/null || true)" == origin ]] || { print -u2 "Expected $PASEO_BRANCH to track origin."; exit 1; }
 [[ "$(git config --get branch.$PASEO_BRANCH.merge 2>/dev/null || true)" == "refs/heads/$PASEO_BRANCH" ]] || { print -u2 "Unexpected tracking merge ref."; exit 1; }
-[[ "$(git remote | LC_ALL=C sort | tr '\n' ' ')" == "origin upstream " ]] || { print -u2 "Unexpected additional or missing Paseo remotes."; exit 1; }
+[[ "$(git remote | LC_ALL=C sort | tr '\n' ' ')" == "origin " ]] || { print -u2 "Unexpected additional or missing Paseo remotes."; exit 1; }
 [[ -z "$(git config --get core.hooksPath 2>/dev/null || true)" ]] || { print -u2 "Custom core.hooksPath is not safe for Paseo prepare."; exit 1; }
-remote_head=$(git ls-remote "$PASEO_FORK_URL" "refs/heads/$PASEO_BRANCH" | awk 'NR == 1 {print $1}')
-[[ "$remote_head" == "$PASEO_VERIFIED_COMMIT" ]] || { print -u2 "Fork branch is not audited commit $PASEO_VERIFIED_COMMIT"; exit 1; }
+[[ "$PASEO_RELEASE_TAG" =~ '^v[0-9]+\.[0-9]+\.[0-9]+$' ]] || { print -u2 "Paseo requires a stable release tag"; exit 1; }
+remote_refs=$(git ls-remote "$PASEO_SOURCE_URL" "refs/tags/$PASEO_RELEASE_TAG" "refs/tags/$PASEO_RELEASE_TAG^{}")
+remote_head=$(printf '%s\n' "$remote_refs" | awk '{if ($2 ~ /\^\{\}$/) peeled=$1; else tag=$1} END {print peeled ? peeled : tag}')
+[[ "$remote_head" == "$PASEO_VERIFIED_COMMIT" ]] || { print -u2 "Release tag does not match audited commit $PASEO_VERIFIED_COMMIT"; exit 1; }
 for hook in .git/hooks/*; do
   [[ -f "$hook" && "$hook" != *.sample ]] || continue
   grep -Eqi lefthook "$hook" || { print -u2 "Custom hook would be overwritten: $hook"; exit 1; }
 done
 [[ -f package-lock.json ]] || { print -u2 "package-lock.json is missing"; exit 1; }
 
-git fetch --quiet --no-tags "$PASEO_FORK_URL" "$PASEO_VERIFIED_COMMIT"
+git fetch --quiet --no-tags "$PASEO_SOURCE_URL" "refs/tags/$PASEO_RELEASE_TAG"
+[[ "$(git rev-parse 'FETCH_HEAD^{commit}')" == "$PASEO_VERIFIED_COMMIT" ]] || { print -u2 "Fetched release tag changed"; exit 1; }
 old_commit=$(git rev-parse HEAD)
 if [[ "$old_commit" != "$PASEO_VERIFIED_COMMIT" ]]; then
   git merge-base --is-ancestor "$old_commit" "$PASEO_VERIFIED_COMMIT" || { print -u2 "Checkout is ahead or divergent from audited commit."; exit 1; }
