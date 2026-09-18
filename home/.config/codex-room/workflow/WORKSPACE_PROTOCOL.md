@@ -4,6 +4,12 @@ This is the small shared contract for a Codex Room workspace. Human
 instructions and owner decisions remain authoritative. A repository may add
 project-local detail, but cannot change role authority or safety boundaries.
 
+All roles read this shared contract from
+`~/.config/codex-room/workflow/WORKSPACE_PROTOCOL.md` before project work, then
+read `docs/WORKSPACE_PROTOCOL.md` relative to the actual target project when
+present. The local document supplements this contract. Report a missing or
+unreadable shared contract rather than silently assuming it was loaded.
+
 ## Authority
 
 - Human owns product goals, priority, material cost, external effects, and
@@ -81,6 +87,27 @@ review role, mandatory form, or reviewer count is
 required.
 
 ## Acceptance and waiting
+
+Every actionable Peer response closes a loop with its original Lead brief.
+Peer addresses the assigned outcome and requested evidence, distinguishes
+complete/missing/failed/unverified claims, and states write ownership. A
+read-only review supplies findings and limits for the bounded question; a
+blocker supplies evidence, consequence, and the decision needed.
+
+Lead must answer the question, resolve dependencies or ownership, request
+specific missing evidence, or explicitly accept/reject the identified
+candidate with a reason. Communicate decisions that affect the Peer and
+record them in the existing project status source. A deferral identifies an
+owner and return event/checkpoint. Silence, DONE, or test results do not close
+the loop. Keep dependent work waiting for resolution while unrelated ready
+work continues.
+
+Supervisor checks briefs, actual Peer responses, and Lead dispositions,
+intervenes through Lead on a concrete gap, and follows it until repaired
+responses and decisions provide closure. An acknowledgment alone is not
+closure. Allow normal response handling within an active turn; escalate at
+the affected decision or missed checkpoint. Private supervision records and
+conversation sources do not belong in project-facing instructions.
 
 Writer proof, passing tests, completion messages, and lifecycle status are
 evidence. Lead inspects the exact artifact and explicitly accepts or rejects
