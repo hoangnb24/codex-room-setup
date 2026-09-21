@@ -370,7 +370,7 @@ class SetupShapeTests(unittest.TestCase):
                     subprocess.run(["git", "-C", str(target), "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "-qm", name], check=True)
                     before = snapshot(target)
                     completed = subprocess.run([str(ROOT / "scripts/install-paseo"), "--preflight"], env=env, capture_output=True, text=True)
-                    self.assertNotEqual(completed.returncode, 0)
+                    self.assertEqual(completed.returncode, 0, completed.stderr)
                     self.assertEqual(snapshot(target), before)
 
             invalid = root / "invalid-target"

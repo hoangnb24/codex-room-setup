@@ -44,6 +44,31 @@ class PaseoReleaseTests(unittest.TestCase):
         self.assertEqual(self.git(self.target, "remote"), "origin")
         self.assertEqual(self.git(self.target, "rev-parse", "v0.8.0^{commit}"), self.release)
 
+    def test_transaction_restores_clean_official_checkout_to_release_tag(self):
+        subprocess.run(["git", "clone", "-q", str(self.remote), str(self.target)], check=True)
+        (self.target / "post-release-change").write_text("newer official checkout\n")
+        self.git(self.target, "add", "post-release-change")
+        self.git(self.target, "-c", "user.name=Test", "-c", "user.email=test@example.invalid",
+                 "commit", "-qm", "post-release")
+        newer_commit = self.git(self.target, "rev-parse", "HEAD")
+
+        preflight = self.run_helper("--preflight")
+        self.assertEqual(preflight.returncode, 0, preflight.stderr)
+        self.assertEqual(self.git(self.target, "rev-parse", "HEAD"), newer_commit)
+
+        direct = self.run_helper()
+        self.assertNotEqual(direct.returncode, 0)
+        self.assertIn("transaction-backed replacement", direct.stderr)
+        self.assertEqual(self.git(self.target, "rev-parse", "HEAD"), newer_commit)
+
+        managed = self.run_helper(PASEO_COORDINATOR_MANAGED="1")
+        self.assertEqual(managed.returncode, 0, managed.stderr)
+        self.assertEqual(self.git(self.target, "rev-parse", "HEAD"), self.release)
+        self.assertEqual(self.git(self.target, "branch", "--show-current"), "main")
+        self.assertEqual(self.git(self.target, "remote"), "origin")
+        self.assertEqual(self.git(self.target, "remote", "get-url", "origin"), str(self.remote))
+        self.assertFalse((self.target / "post-release-change").exists())
+
     def test_annotated_release_tag_uses_peeled_commit(self):
         self.git(self.remote, "tag", "-d", "v0.8.0")
         self.git(self.remote, "-c", "user.name=Test", "-c", "user.email=test@example.invalid",

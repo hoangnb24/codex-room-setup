@@ -140,7 +140,10 @@ validate_existing_target() {
     git -C "$history_repo" fetch --quiet --no-tags "$repo" "$old_commit"
     fetched_existing=$(git -C "$history_repo" rev-parse "FETCH_HEAD^{commit}")
     [[ "$fetched_existing" == "$old_commit" ]] || die "could not inspect existing Paseo HEAD without mutation"
-    git -C "$history_repo" merge-base --is-ancestor "$old_commit" "$verified_commit" || die "Paseo checkout is ahead or divergent from audited commit"
+    if ! git -C "$history_repo" merge-base --is-ancestor "$old_commit" "$verified_commit"; then
+      [[ "$preflight" == true || "$coordinator_managed" == 1 ]] || \
+        die "Paseo checkout differs from audited tag; use ./install --apply for a transaction-backed replacement"
+    fi
   fi
 }
 

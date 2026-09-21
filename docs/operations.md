@@ -85,7 +85,8 @@ Run `paseo-local-update` only when no important agent turn or Desktop operation
 is active. It verifies the audited official stable release tag, requires normalized
 remotes/tracking plus a clean tracked/index state, and permits only an exact-pin
 no-op or clean fast-forward to that immutable commit. Run `./install --apply`
-first to migrate the recognized old fork; the public installer backs it up. It refuses detached,
-dirty, ahead/divergent, custom-topology, custom-hook, and lock-integrity
-states; then it runs `npm ci`, builds, replaces the app, and restarts the
-daemon. It never pulls, rebases, resets, or merges automatically.
+first when the checkout is ahead/divergent or uses the recognized old fork; the
+public installer backs it up before restoring the audited tag. The updater
+refuses detached, dirty, ahead/divergent, custom-topology, custom-hook, and
+lock-integrity states; then it runs `npm ci`, builds, replaces the app, and
+restarts the daemon. It never pulls, rebases, resets, or merges automatically.

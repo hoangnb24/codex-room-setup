@@ -405,7 +405,7 @@ def toml_interpreter() -> str:
     configured = os.environ.get("CODEX_ROOM_TOML_PYTHON")
     if configured:
         return configured
-    for candidate in ("python3.12", "python3.11"):
+    for candidate in ("python3.14", "python3.13", "python3.12", "python3.11"):
         if command_path(candidate):
             return candidate
     # The verifier only needs tomllib for one set of checks.  Keep the

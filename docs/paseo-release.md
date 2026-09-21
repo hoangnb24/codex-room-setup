@@ -28,8 +28,12 @@ and smoke-tests `paseo --help`. Custom hooks/core.hooksPath and lockfile mutatio
 are refused. The public coordinator snapshots the checkout and CLI link before
 publishing; dependency/build/runtime/final-verification failures restore that snapshot.
 
-Existing official checkouts must be clean and on the expected branch. Only the
-exact pin or an ancestor of it is accepted. Untracked operator state is preserved.
+Existing official checkouts must be clean, on the expected branch, and use only
+the configured official `origin`. The public transaction backs up the checkout
+and makes the audited tag authoritative even when the current commit is ahead or
+divergent. The standalone helper accepts only the exact pin or an ancestor of it,
+so a history replacement cannot occur without the coordinator's backup and
+rollback boundary. Untracked operator state is preserved.
 
 One explicit exception handles the old Room fork at
 `8511089eaeb06cddd049b629562926822020de5c`. The recognized layouts are:

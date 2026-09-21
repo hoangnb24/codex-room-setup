@@ -100,8 +100,11 @@ The Paseo source manifest pins official stable release **v0.8.0** and its immuta
 It never installs a daily main build or beta. See [release selection and fork migration](docs/paseo-release.md). The public installer
 preflights Paseo in a disposable location before changing live state. Paseo uses
 `npm ci` and refuses custom Git hooks because its audited `prepare` lifecycle
-installs lefthook; official-release updates are exact-pin/no-op or fast-forward-only. The recognized
-old Room fork is migrated once inside the backed-up install transaction.
+installs lefthook. The public transaction makes the audited tag authoritative for
+a clean checkout on the configured branch and official origin, including when
+the checkout is ahead or divergent; the standalone helper remains
+fast-forward-only. The recognized old Room fork is migrated once inside the
+backed-up install transaction.
 
 The installer backs up every replaced managed file and the Paseo checkout under
 `~/.codex-room-backups/core3-<UTC timestamp>-<pid>-<nanoseconds>/` with
